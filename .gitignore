@@ -20,6 +20,7 @@ models/
 .idea/
 
 # 內部文件，不公開
-CONVENTIONS_final.md
-PLAN.md
-PHASE1_NOTES.md
+# 用萬用字元，改檔名時才不會不小心漏掉而被推上去
+CONVENTIONS*.md
+PLAN*.md
+PHASE*_NOTES.md
