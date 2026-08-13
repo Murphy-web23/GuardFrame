@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.env
+venv/
+node_modules/
+data/
+track1_synthetic/weights/
+*.mp4
+*.pth
+*.onnx
+
+# 第三方模型檔（MediaPipe .task、InsightFace buffalo_l 等），用雲端硬碟共享
+models/
+*.task
+
+# 開發環境雜項
+.pytest_cache/
+.ipynb_checkpoints/
+.vscode/
+.idea/
+
+# 內部文件，不公開
+CONVENTIONS_final.md
+PLAN.md
+PHASE1_NOTES.md

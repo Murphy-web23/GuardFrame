@@ -1,0 +1,40 @@
+# GuardFrame 依賴套件
+#
+# Python 3.12（兩人必須完全一致，見 PLAN.md）
+# 版本為 2026-08-13 在 Windows 11 / Python 3.12.13 實測通過的組合。
+#
+# 建環境：
+#   python -m venv venv
+#   venv\Scripts\activate
+#   pip install -r requirements.txt
+#   python test_env.py
+#
+# 註：A 需要 GPU 版的 torch 與 onnxruntime-gpu，不在這份清單裡。
+#     A 請照 PLAN.md「A 的安裝步驟」到 pytorch.org 取得對應 CUDA 版本的指令。
+
+# 影像與訊號
+opencv-python==5.0.0.93
+mediapipe==1.0.0
+numpy==2.5.2
+scipy==1.18.0
+matplotlib==3.11.1
+
+# 人臉偵測與嵌入（B 用 CPU 版，不要裝 onnxruntime-gpu）
+insightface==1.0.1
+onnxruntime==1.28.0
+
+# 後端
+fastapi==0.141.1
+uvicorn[standard]==0.52.2
+python-multipart==0.0.32
+
+# 資料庫與設定
+SQLAlchemy==2.0.52
+psycopg2-binary==2.9.12
+pydantic==2.13.4
+python-dotenv==1.2.2
+
+# 開發工具
+jupyter==1.1.1
+tqdm==4.70.0
+pytest==9.1.1
