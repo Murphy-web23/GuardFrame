@@ -1,0 +1,30 @@
+# 兩人的開發環境不同（一邊 Windows 原生、一邊 WSL/Linux），
+# 沒有這份設定的話換行符號會讓整個檔案顯示成「全部都改了」，
+# 製造無意義的合併衝突。
+#
+# 做法：repo 裡一律存成 LF，各自 checkout 時由 git 處理。
+
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.ipynb text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Windows 專用腳本要保留 CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# 二進位檔不要碰
+*.mp4   binary
+*.png   binary
+*.jpg   binary
+*.task  binary
+*.onnx  binary
+*.pth   binary
+*.npy   binary
+*.zip   binary
