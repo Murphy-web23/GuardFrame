@@ -51,12 +51,12 @@ OCC_IDENTITY_STABILITY_MIN = 0.90
 OCC_MAX_DROP_THRESHOLD = 0.20
 OCC_LAYER_SCORE_MIN = 0.50
 
-# 五層權重（共同決定後填入）
+# 五層權重（Track 4 為核心防禦層，權重最高；實測後於階段4依 ROC 校準微調）
 WEIGHT_BASELINE = 0.10
-WEIGHT_SYNTHETIC = 0.25
+WEIGHT_SYNTHETIC = 0.20
 WEIGHT_RPPG = 0.15
-WEIGHT_PHOTOMETRIC = 0.30
-WEIGHT_OCCLUSION = 0.20
+WEIGHT_PHOTOMETRIC = 0.20
+WEIGHT_OCCLUSION = 0.35
 
 # 決策區間
 RISK_PASS_MAX = 30
@@ -111,3 +111,9 @@ RPPG_MIN_FRAMES = 64  # 少於此格數無法做出可信的頻譜
 QUALITY_CONTRAST_MIN = 20.0  # 灰階標準差，過低代表畫面死白或死黑
 QUALITY_OVEREXPOSED_MAX = 0.15  # 過曝像素比例上限
 QUALITY_OVEREXPOSED_LEVEL = 250  # 灰階值 >= 此值視為過曝
+
+# VIDEO_SECONDS_MIN/MAX（上方 §8 區塊）語意更新：
+# 新版設計錄影總長已固定約 23 秒（動作 20 秒＋照明 3 秒，CONVENTIONS §5.3），
+# 不再是使用者依速度完成、長度可變的舊流程，因此不再需要動態上下限判斷。
+# 這兩個常數保留給 API 層日後做上傳影片的合理性檢查（例如擋掉被截斷、
+# 竄改或明顯不合規格的檔案），不是給前端動態配速用。數值本身仍照 §8，未更動。
