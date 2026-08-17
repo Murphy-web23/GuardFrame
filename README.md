@@ -39,8 +39,10 @@ pytest tests/ -q
 | `track3_photometric/` | 完成（後端）。合成多區塊影格端到端驗證。`PHOTO_GEOMETRY_CV_REFERENCE` 待真實資料校準；真實影片驗證需前端顏色播放器，排階段 3 |
 | `track4_occlusion/` | 完成（後端）。合成「兩次揮手遮擋」情境端到端驗證（含身分互換、臉透出來、沒揮手三種失敗情境）。`OCC_LAYER_COLOR_REFERENCE` 待真實資料校準；鼻樑 landmark 索引待用 `draw_geometry_overlay()` 目視驗證 |
 | `image_utils/quality.py` | 完成，`faceRatio` 需 InsightFace 模型 |
-| `image_utils/id_card.py` | 尚未開始 |
-| `baseline_challenge/`、`api/`、`frontend/` | 尚未開始 |
+| `image_utils/id_card.py` | 完成，合成矩形卡片驗證，真實證件照片待驗證 |
+| `baseline_challenge/` | 完成。左右轉判定用自創的幾何比例，方向待真實影片驗證，見 PHASE_NOTES |
+| `common/fusion.py` | 完成。五層加權融合＋三段式決策 |
+| `api/`、`frontend/` | 尚未開始 |
 | `track1_synthetic/`、`vlm_summary/` | A 負責 |
 
 ## 需要另外取得的模型檔
