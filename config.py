@@ -112,6 +112,27 @@ QUALITY_CONTRAST_MIN = 20.0  # 灰階標準差，過低代表畫面死白或死�
 QUALITY_OVEREXPOSED_MAX = 0.15  # 過曝像素比例上限
 QUALITY_OVEREXPOSED_LEVEL = 250  # 灰階值 >= 此值視為過曝
 
+# Track 3｜臉部偵測率門檻
+# 跟 RPPG_MIN_FACE_RATIO 同樣的道理：偵測到臉的影格佔比太低，
+# 補值會蓋過真訊號，算出來的相關係數不可信。
+PHOTO_MIN_FACE_RATIO = 0.5
+
+# Track 3｜互相關搜尋延遲範圍（毫秒）
+# 遠大於 PHOTO_LATENCY_MAX_MS 的 80ms，這樣即使真實延遲超標，
+# 也還是能被搜尋到、正確報告出來，而不是被搜尋窗排除在外。
+PHOTO_LATENCY_SEARCH_MS = 500.0
+
+# Track 3｜lightCurve／reflectCurve 輸出點數（§4.5 規定固定 100）
+PHOTO_CURVE_POINTS = 100
+
+# Track 3｜立體幾何一致性
+# 三個檢查區域（額頭、鼻樑、雙頰）對照明變化的反應幅度，各區反應幅度的
+# 變異係數（CV）除以這個參考值、夾在 0-1 之間，映射成 geometryScore。
+# 目前是未經真實資料驗證的初始猜測（沿用 Track 2 SNR 門檻的教訓：算法與
+# 門檻必須配套用真實資料驗證，見 PHASE1_NOTES §6.2）——待錄到真人與
+# 列印照片翻拍樣本後，比照 PHASE1_NOTES §5.4 的方法重新校準，不能直接信。
+PHOTO_GEOMETRY_CV_REFERENCE = 0.3
+
 # VIDEO_SECONDS_MIN/MAX（上方 §8 區塊）語意更新：
 # 新版設計錄影總長已固定約 23 秒（動作 20 秒＋照明 3 秒，CONVENTIONS §5.3），
 # 不再是使用者依速度完成、長度可變的舊流程，因此不再需要動態上下限判斷。
