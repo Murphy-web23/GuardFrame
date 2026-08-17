@@ -101,6 +101,16 @@ MEDIAPIPE_MIN_DETECTION_CONFIDENCE = 0.5
 MEDIAPIPE_MIN_PRESENCE_CONFIDENCE = 0.5
 MEDIAPIPE_MIN_TRACKING_CONFIDENCE = 0.5
 
+# MediaPipe Hand Landmarker 模型檔（Track 4 專用，同一套 Tasks API 機制）
+MEDIAPIPE_HAND_MODEL = MODELS_DIR / "hand_landmarker.task"
+MEDIAPIPE_HAND_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/1/hand_landmarker.task"
+)
+MEDIAPIPE_HAND_MIN_DETECTION_CONFIDENCE = 0.5
+MEDIAPIPE_HAND_MIN_PRESENCE_CONFIDENCE = 0.5
+MEDIAPIPE_HAND_MIN_TRACKING_CONFIDENCE = 0.5
+
 # Track 2｜訊號處理參數
 RPPG_FILTER_ORDER = 3  # Butterworth 階數，PLAN 階段 1 用的就是 3
 RPPG_MIN_FACE_RATIO = 0.5  # 偵測到臉的影格需佔多少比例，低於此 detected=False
@@ -111,6 +121,26 @@ RPPG_MIN_FRAMES = 64  # 少於此格數無法做出可信的頻譜
 QUALITY_CONTRAST_MIN = 20.0  # 灰階標準差，過低代表畫面死白或死黑
 QUALITY_OVEREXPOSED_MAX = 0.15  # 過曝像素比例上限
 QUALITY_OVEREXPOSED_LEVEL = 250  # 灰階值 >= 此值視為過曝
+
+# Track 4｜臉部參考框擴張比例
+# 手部中心座標要落在「擴張過的臉部框」內才算遮擋中，不是原始 bbox——
+# 揮手經過臉頰外緣、下巴附近也算數，原始 InsightFace bbox 通常只框到
+# 五官核心區域，太緊會漏掉合理的遮擋。
+OCC_FACE_REGION_MARGIN = 0.35
+
+# Track 4｜遮擋層級顏色距離參考值
+# layer_consistency_score() 算出的顏色歐氏距離除以這個值、夾在 0-1，
+# 映射成 layerScore。目前是未經真實資料驗證的初始猜測（沿用 Track 2/3
+# 同樣的教訓：算法與門檻必須配套用真實資料驗證，不能只憑經驗寫死）——
+# 待錄到真人與即時換臉遮擋樣本後才能校準。
+OCC_LAYER_COLOR_REFERENCE = 40.0
+
+# Track 4｜InsightFace 偵測參數
+# ctx_id=-1 強制用 CPU（B 沒有 GPU，見 CONVENTIONS §3）。
+# det_size 沿用 PLAN.md 階段1 範例的 640x640，正確性優先，效能優化留待
+# PHASE1_NOTES §七 提到的「隔格抽樣」階段再做，不在這裡先猜著調。
+INSIGHTFACE_CTX_ID = -1
+INSIGHTFACE_DET_SIZE = (640, 640)
 
 # Track 3｜臉部偵測率門檻
 # 跟 RPPG_MIN_FACE_RATIO 同樣的道理：偵測到臉的影格佔比太低，
