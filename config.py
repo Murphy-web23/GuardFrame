@@ -122,6 +122,20 @@ QUALITY_CONTRAST_MIN = 20.0  # 灰階標準差，過低代表畫面死白或死�
 QUALITY_OVEREXPOSED_MAX = 0.15  # 過曝像素比例上限
 QUALITY_OVEREXPOSED_LEVEL = 250  # 灰階值 >= 此值視為過曝
 
+# 證件矯正｜Canny + 透視變換參數
+# 數值沿用 PLAN.md 階段1 範例（縮小到 800px 加速處理、Canny 50/150、
+# 取前 5 大輪廓），矯正後輸出尺寸 856x540 對應 §4.7 規定的 ISO/IEC 7810
+# ID-1 卡片比例。
+ID_CARD_RESIZE_WIDTH = 800
+ID_CARD_CANNY_LOW = 50
+ID_CARD_CANNY_HIGH = 150
+ID_CARD_BLUR_KERNEL = (5, 5)
+ID_CARD_CONTOUR_TOP_N = 5
+ID_CARD_APPROX_EPSILON_RATIO = 0.02
+ID_CARD_OUTPUT_WIDTH = 856
+ID_CARD_OUTPUT_HEIGHT = 540
+ID_CARD_ASPECT_RATIO = ID_CARD_OUTPUT_WIDTH / ID_CARD_OUTPUT_HEIGHT  # ≈ 1.585
+
 # 對照組｜眨眼 EAR 閾值
 # 標準 6 點 EAR 公式（Soukupová & Čech）的文獻常見值：睜眼約 0.25-0.35，
 # 閉眼約 0.10-0.15，0.21 是常見的中間門檻。尚未用真實眨眼影片驗證過，
