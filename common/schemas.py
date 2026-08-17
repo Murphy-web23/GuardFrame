@@ -1,0 +1,263 @@
+"""共用｜Pydantic 資料結構，處理 §7 命名規則裡「Python 內部 snake_case，
+送給前端的 JSON 一律 camelCase」的轉換。
+
+契約見 CONVENTIONS.md §5.1（完整驗證紀錄）、§5.2（光序列格式）、
+§5.3（挑戰指定格式與階段區間）、§5.7（正式資料庫結構）、§7（命名規則）。
+
+**這裡的欄位刻意跟各 analyzer 回傳的原始 dict 一樣直接用 camelCase 對應
+（Track 2-4／對照組的契約本身就是回傳 camelCase 鍵的 dict，見 §4），
+不是先轉成 snake_case 再轉回去。** 所有 model 都繼承 `CamelModel`：
+欄位用 snake_case 定義（符合 §7「Python 內部用 snake_case」的字面意思，
+也讓 IDE 補全跟 Python 慣例一致），`to_camel` alias_generator 自動產生
+對應的 camelCase 別名，兩個方向都能用——`Model.model_validate(raw_dict)`
+可以直接吃各 analyzer 回傳的 camelCase dict，`model.model_dump(by_alias=
+True)` 輸出的也是 camelCase，不需要每個欄位手動寫 alias，不要在各處
+手動轉（§7 原文的要求）。
+
+**用到 model_dump() 或 model_dump_json() 的地方，記得帶 by_alias=True**
+——忘記帶的話會印出 snake_case 版本，這點容易忘記，FastAPI 的
+response_model 機制預設會用 alias（api/ 層再另外確認）。
+"""
+
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict
+from pydantic.alias_generators import to_camel
+
+
+class CamelModel(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+
+# --------------------------------------------------------------------------
+# 共用的小型子結構
+# --------------------------------------------------------------------------
+
+
+class CheckItem(CamelModel):
+    """三項判定的單一項目，Track 2/3/4 與對照組共用的格式（固定 3 項，
+    順序不可變，順序本身由各 analyzer 保證，這裡不重覆檢查）。"""
+
+    label: str
+    passed: bool
+
+
+class TopSignal(CamelModel):
+    """Track 1 的判斷依據（§4.1），固定 3 個，weight 由高到低排序。"""
+
+    label: str
+    weight: float
+
+
+# --------------------------------------------------------------------------
+# 錄影階段區間（§5.1 recording.phases、§5.3）
+# --------------------------------------------------------------------------
+
+
+class RecordingPhases(CamelModel):
+    """各階段的影格區間 [起, 訖]，全片索引。
+
+    occlusion 是 action 內的子區間（= wave_hand 那一項的區間），
+    不是獨立於動作挑戰之外的額外階段，見 §5.3 說明。
+    """
+
+    action: tuple[int, int]
+    lighting: tuple[int, int]
+    occlusion: tuple[int, int]
+
+
+class RecordingInfo(CamelModel):
+    duration_sec: float
+    fps: float
+    total_frames: int
+    phases: RecordingPhases
+
+
+# --------------------------------------------------------------------------
+# 品質檢查（§4.7 check_image_quality() 的回傳格式）
+# --------------------------------------------------------------------------
+
+
+class QualityResult(CamelModel):
+    passed: bool
+    blur_score: float
+    brightness: float
+    contrast: float
+    overexposed_ratio: float
+    face_ratio: float
+    message: str
+
+
+# --------------------------------------------------------------------------
+# 對照組（§4.3 analyze_baseline() 的回傳格式）
+# --------------------------------------------------------------------------
+
+
+class BaselineChallengeItem(CamelModel):
+    action: Literal["blink", "turn_left", "turn_right", "wave_hand"]
+    name: str
+    duration_sec: int
+    passed: bool
+
+
+class BaselineResult(CamelModel):
+    standard: str
+    challenges: list[BaselineChallengeItem]
+    verdict: Literal["pass", "reject"]
+    verdict_label: str
+
+
+# --------------------------------------------------------------------------
+# Track 1（§4.1 detect_synthetic() 的回傳格式，A 交付）
+# --------------------------------------------------------------------------
+
+
+class SyntheticResult(CamelModel):
+    """detect_synthetic() 本身只回傳 fakeProbability/topSignals（§4.1），
+    threshold 與 verdict 是融合層依 config.SYNTHETIC_THRESHOLD 比較後
+    補上的，見 common/fusion.py。組裝完整紀錄時才會有這兩個欄位。
+    """
+
+    fake_probability: float
+    threshold: float
+    verdict: Literal["pass", "reject"]
+    top_signals: list[TopSignal]
+
+
+# --------------------------------------------------------------------------
+# Track 2（§4.4 analyze_rppg() 的回傳格式）
+# --------------------------------------------------------------------------
+
+
+class RppgResult(CamelModel):
+    detected: bool
+    heart_rate: Optional[float]
+    snr: float
+    roi_consistency: float
+    checks: list[CheckItem]
+    waveform: list[float]
+    spectrum: list[float]
+
+
+# --------------------------------------------------------------------------
+# Track 3（§4.5 analyze_photometric() 的回傳格式）
+# --------------------------------------------------------------------------
+
+
+class PhotometricResult(CamelModel):
+    detected: bool
+    correlation: float
+    latency_ms: Optional[float]
+    geometry_score: float
+    sequence: list[str]
+    checks: list[CheckItem]
+    light_curve: list[float]
+    reflect_curve: list[float]
+
+
+# --------------------------------------------------------------------------
+# Track 4（§4.6 analyze_occlusion() 的回傳格式，核心防禦層）
+# --------------------------------------------------------------------------
+
+
+class OcclusionResult(CamelModel):
+    detected: bool
+    wave_cycles_detected: int
+    identity_stability: float
+    max_identity_drop: float
+    occlusion_segments: list[tuple[int, int]]
+    layer_score: float
+    anomaly_frames: list[int]
+    checks: list[CheckItem]
+    stability_curve: list[float]
+
+
+# --------------------------------------------------------------------------
+# 決策融合（common/fusion.py 的回傳格式）
+# --------------------------------------------------------------------------
+
+
+class DecisionResult(CamelModel):
+    risk_score: int
+    verdict: Literal["pass", "review", "reject"]
+    verdict_label: str
+    reasons: list[str]
+
+
+# --------------------------------------------------------------------------
+# VLM 摘要（§4.2 summarize_verification() 的回傳格式，A 交付，排序在後）
+# --------------------------------------------------------------------------
+
+
+class VlmFrameObservation(CamelModel):
+    frame_index: int
+    observation: str
+
+
+class VlmSummary(CamelModel):
+    available: bool
+    frame_observations: list[VlmFrameObservation]
+    summary: str
+    model: str
+    latency_ms: float
+
+
+# --------------------------------------------------------------------------
+# 完整驗證紀錄（§5.1，前台/API/資料庫共用的最上層結構）
+# --------------------------------------------------------------------------
+
+
+class VerificationRecord(CamelModel):
+    id: str
+    timestamp: str
+    applicant_name: str
+    applicant_id_masked: str
+    source_type: Literal["實體相機", "虛擬攝影機", "實體相機（翻拍）"]
+
+    recording: RecordingInfo
+    quality: QualityResult
+    baseline: BaselineResult
+    synthetic: SyntheticResult
+    rppg: RppgResult
+    photometric: PhotometricResult
+    occlusion: OcclusionResult
+    decision: DecisionResult
+
+    vlm_summary: Optional[VlmSummary] = None
+    # pending_setup：verdict=pass 但尚未完成帳戶設定的中繼狀態（§5.8）
+    account_result: Literal["pending_setup", "opened", "pending", "rejected"]
+
+
+# --------------------------------------------------------------------------
+# 前端輸入：光序列（§5.2）與挑戰指定（§5.3）
+#
+# 這兩個不是 analyzer 的輸出，是前端錄影時產生、隨影片一起上傳的資料，
+# FastAPI 收到 §5.5 API 契約裡的 light_log / challenges 這兩個 JSON
+# string 欄位時，用這裡的 model 解析驗證。
+# --------------------------------------------------------------------------
+
+
+class LightLogSegment(CamelModel):
+    color: Literal["淡紅", "淡綠", "淡藍", "灰白"]
+    hex: str
+    start_ms: int
+    duration_ms: int
+
+
+class LightLog(CamelModel):
+    start_timestamp: int
+    segments: list[LightLogSegment]
+
+
+class ChallengeSpec(CamelModel):
+    """前端指定的動作順序（§5.3）。只有 action + durationSec——passed
+    是 analyze_baseline() 判定後才有的欄位，屬於 BaselineChallengeItem，
+    不是這裡。"""
+
+    action: Literal["blink", "turn_left", "turn_right", "wave_hand"]
+    duration_sec: int
+
+
+class ChallengesPayload(CamelModel):
+    challenges: list[ChallengeSpec]
+    recording: RecordingInfo
