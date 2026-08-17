@@ -34,6 +34,13 @@ psycopg2-binary==2.9.12
 pydantic==2.13.4
 python-dotenv==1.2.2
 
+# 認證（後台密碼雜湊，NFR-15 禁止明文儲存，見 CONVENTIONS §4.9/§8.1）
+# bcrypt 固定 <4.1：passlib 1.7.4（最後一版，2020 年後未再更新）靠讀取
+# bcrypt.__about__.__version__ 判斷後端，這個屬性在 bcrypt 4.1 被移除，
+# 裝新版會在雜湊時直接噴 AttributeError。4.0.1 是仍保留該屬性的最新版。
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
 # 開發工具
 jupyter==1.1.1
 tqdm==4.70.0
