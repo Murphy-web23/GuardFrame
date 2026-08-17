@@ -19,6 +19,7 @@ True)` 輸出的也是 camelCase，不需要每個欄位手動寫 alias，不要
 response_model 機制預設會用 alias（api/ 層再另外確認）。
 """
 
+from datetime import date
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -261,3 +262,25 @@ class ChallengeSpec(CamelModel):
 class ChallengesPayload(CamelModel):
     challenges: list[ChallengeSpec]
     recording: RecordingInfo
+
+
+# --------------------------------------------------------------------------
+# API 請求/回應：POST /api/applicants（§5.5）
+# --------------------------------------------------------------------------
+
+
+class ApplicantCreateRequest(CamelModel):
+    """idNumber 是完整身分證字號，只在請求解析與遮蔽這一步存在——
+    api/routes.py 收到後立刻算出 id_number_masked，完整號碼不寫進資料庫
+    也不記錄於任何地方（NFR-14）。"""
+
+    name: str
+    id_number: str
+    birth_date: date
+    phone: str
+    email: str
+    address: str
+
+
+class ApplicantCreateResponse(CamelModel):
+    applicant_id: int
