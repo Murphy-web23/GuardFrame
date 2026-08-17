@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>Track 3 照明測試 — GuardFrame</title>
+<style>
+  body { font-family: "Microsoft JhengHei", sans-serif; max-width: 700px; margin: 30px auto; padding: 0 20px; background: #1a1a1a; color: #eee; }
+  h1 { font-size: 1.3em; }
+  p.note { color: #aaa; font-size: 0.9em; }
+  #stage { width: 100%; max-width: 480px; aspect-ratio: 4/3; position: relative; border-radius: 8px; overflow: hidden; background: #000; margin: 15px 0; }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #flash { position: absolute; inset: 0; opacity: 0; transition: background-color 120ms linear, opacity 120ms linear; pointer-events: none; }
+  #flash.on { opacity: 0.55; }
+  button { background: #4caf50; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 1em; margin: 4px 10px 4px 0; }
+  button:disabled { background: #555; cursor: not-allowed; }
+  #status { padding: 10px; border-radius: 6px; margin: 15px 0; background: #2a2a2a; white-space: pre-wrap; font-family: monospace; font-size: 0.85em; }
+  a.download { display: inline-block; margin: 5px 10px 5px 0; color: #8f8; }
+</style>
+</head>
+<body>
+  <h1>Track 3 照明測試工具</h1>
+  <p class="note">
+    這不是正式前端，只是用最少的程式碼產生一組真的 light_log.json + 對應影片，
+    拿去餵 <code>analyze_photometric()</code> 驗證用。時間同步用瀏覽器的
+    <code>performance.now()</code>，跟正式設計建議的「開頭加一次白色閃光當同步
+    標記」比起來精度較粗，correlation 分數僅供參考、不必太在意差一點點。
+  </p>
+
+  <div id="stage">
+    <video id="preview" autoplay playsinline muted></video>
+    <div id="flash"></div>
+  </div>
+
+  <div>
+    <button id="btnStart" onclick="startCamera()">1. 開啟攝影機</button>
+    <button id="btnRecord" onclick="startTest()" disabled>2. 開始錄製（會閃 5 段顏色，約 2-3 秒）</button>
+  </div>
+
+  <div id="status">準備中…</div>
+  <div id="downloads"></div>
+
+<script>
+// 顏色與亮度值跟 CONVENTIONS.md §5.2 一致，B 這邊 Python 的
+// track3_photometric/sequence.py 用同一組值，兩邊要對得上。
+const COLORS = [
+  { name: "淡紅", hex: "#D98080" },
+  { name: "淡綠", hex: "#80D9A0" },
+  { name: "淡藍", hex: "#8098D9" },
+  { name: "灰白", hex: "#E8E8E8" },
+];
+const SEGMENT_COUNT = 5;
+const SEGMENT_MIN_MS = 400;
+const SEGMENT_MAX_MS = 600;
+const TRANSITION_MS = 120;
+
+let stream = null;
+let recorder = null;
+let chunks = [];
+const statusEl = () => document.getElementById('status');
+
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    document.getElementById('preview').srcObject = stream;
+    document.getElementById('btnRecord').disabled = false;
+    statusEl().textContent = '攝影機就緒。準備好之後按「開始錄製」，接著螢幕會閃幾種顏色，' +
+      '臉盡量正對鏡頭、跟平常一樣坐著就好，錄製期間盡量別動。';
+  } catch (e) {
+    statusEl().textContent = '無法取得攝影機權限：' + e.name + ' — ' + e.message;
+  }
+}
+
+function buildSequence() {
+  const segments = [];
+  let t = 0;
+  for (let i = 0; i < SEGMENT_COUNT; i++) {
+    const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+    const duration = SEGMENT_MIN_MS + Math.floor(Math.random() * (SEGMENT_MAX_MS - SEGMENT_MIN_MS + 1));
+    segments.push({ color: color.name, hex: color.hex, startMs: t, durationMs: duration });
+    t += duration;
+  }
+  return segments;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function startTest() {
+  document.getElementById('btnRecord').disabled = true;
+  document.getElementById('downloads').innerHTML = '';
+  chunks = [];
+
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+    ? 'video/webm;codecs=vp9' : 'video/webm';
+  recorder = new MediaRecorder(stream, { mimeType });
+  recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+  const segments = buildSequence();
+  const flashEl = document.getElementById('flash');
+  const done = new Promise(resolve => { recorder.onstop = resolve; });
+
+  recorder.start();
+  const startTimestamp = performance.now();
+  statusEl().textContent = '錄製中，請正對鏡頭…';
+
+  for (const seg of segments) {
+    flashEl.style.backgroundColor = seg.hex;
+    flashEl.classList.add('on');
+    await sleep(seg.durationMs);
+  }
+  flashEl.classList.remove('on');
+  await sleep(TRANSITION_MS);
+
+  recorder.stop();
+  await done;
+
+  const totalSec = ((performance.now() - startTimestamp) / 1000).toFixed(1);
+  statusEl().textContent = `錄製完成，共 ${totalSec} 秒。下面下載影片跟 light_log，` +
+    `丟給 analyze_photometric() 測試（記得先用 ffmpeg 或任何轉檔工具把 .webm ` +
+    `轉成 .mp4，Python 這邊的 extract_frames() 用 OpenCV 讀，webm 不一定能開）。`;
+
+  const videoBlob = new Blob(chunks, { type: 'video/webm' });
+  const lightLog = { startTimestamp: Math.round(startTimestamp), segments };
+
+  addDownload(videoBlob, 'track3_test.webm', '下載影片');
+  addDownload(
+    new Blob([JSON.stringify(lightLog, null, 2)], { type: 'application/json' }),
+    'track3_test_light_log.json',
+    '下載 light_log.json'
+  );
+
+  document.getElementById('btnRecord').disabled = false;
+}
+
+function addDownload(blob, filename, label) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.textContent = label + '（' + filename + '）';
+  a.className = 'download';
+  document.getElementById('downloads').appendChild(a);
+  document.getElementById('downloads').appendChild(document.createElement('br'));
+}
+</script>
+</body>
+</html>
