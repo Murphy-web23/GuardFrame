@@ -1,0 +1,241 @@
+"""POST /api/applicants/{id}/verify 的測試，透過 FastAPI TestClient 接真的
+Postgres。沒有可用連線時自動 skip。
+
+合成的測試影片沒有真人臉部，品質檢查（image_utils/quality.py）一定會
+卡在 faceRatio 這關而不合格——這是預期行為，不是繞過。「品質不合格」
+跟「品質通過後整條五層+融合+資料庫寫入管線走得通」是兩個獨立要驗證
+的問題，後者用 monkeypatch 讓 check_image_quality 直接回傳 passed=True，
+但底下五個 analyzer 全部是真的在跑，不是 mock。
+"""
+
+import json
+import sys
+from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import cv2
+import numpy as np
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+
+import api.routes as routes
+from api.database import DATABASE_URL, SessionLocal
+from api.main import app
+from api.models import Applicant, Base, VerificationRecordRow
+from track3_photometric import sequence as seq
+
+
+def _db_available():
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect():
+            pass
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
+requires_db = pytest.mark.skipif(
+    not _db_available(),
+    reason="沒有可用的 PostgreSQL 連線（guardframe-pg 容器沒啟動？見 .env.example）",
+)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _ensure_tables():
+    if _db_available():
+        engine = create_engine(DATABASE_URL)
+        Base.metadata.create_all(engine)
+        engine.dispose()
+
+
+@pytest.fixture
+def client():
+    return TestClient(app)
+
+
+# fps 刻意用得比真實的 30 低，讓測試影片格數少一點、跑快一點，
+# 同時保持跟真實比例相近的段落安排：
+#   blink 3s / turn_left 5s / turn_right 5s / wave_hand 7s = action 20s
+#   lighting 3s，wave_hand 剛好是 action 的最後 7 秒，對應 phases.occlusion
+_TEST_FPS = 5.0
+_DURATIONS = {"blink": 3, "turn_left": 5, "turn_right": 5, "wave_hand": 7}
+_ACTION_FRAMES = int(sum(_DURATIONS.values()) * _TEST_FPS)  # 100
+_LIGHTING_FRAMES = int(3 * _TEST_FPS)  # 15
+_WAVE_HAND_FRAMES = int(_DURATIONS["wave_hand"] * _TEST_FPS)  # 35
+
+
+@pytest.fixture
+def applicant_id():
+    session = SessionLocal()
+    try:
+        applicant = Applicant(
+            name="Verify測試用戶", id_number_masked="C56****321", phone="0911222333",
+            email="pytest-verify@example.com", address="測試地址",
+            birth_date=date(1990, 1, 1),
+        )
+        session.add(applicant)
+        session.commit()
+        session.refresh(applicant)
+        yield applicant.id
+    finally:
+        session.query(VerificationRecordRow).filter_by(applicant_id=applicant.id).delete()
+        session.query(Applicant).filter_by(id=applicant.id).delete()
+        session.commit()
+        session.close()
+
+
+def _make_test_video(path, num_frames, size=100, textured=False):
+    """畫一支測試影片。textured=True 時每格畫隨機雜訊塊，有邊緣/對比，
+    但仍然沒有真人臉，faceRatio 還是會不合格。"""
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(path), fourcc, _TEST_FPS, (size, size))
+    rng = np.random.default_rng(0)
+    try:
+        for _ in range(num_frames):
+            if textured:
+                frame = rng.integers(80, 180, size=(size, size, 3), dtype=np.uint8)
+            else:
+                frame = np.full((size, size, 3), 120, dtype=np.uint8)
+            writer.write(frame)
+    finally:
+        writer.release()
+
+
+def _build_payload():
+    challenges = [
+        {"action": "blink", "durationSec": _DURATIONS["blink"]},
+        {"action": "turn_left", "durationSec": _DURATIONS["turn_left"]},
+        {"action": "turn_right", "durationSec": _DURATIONS["turn_right"]},
+        {"action": "wave_hand", "durationSec": _DURATIONS["wave_hand"]},
+    ]
+    action_end = _ACTION_FRAMES - 1
+    lighting_start = _ACTION_FRAMES
+    lighting_end = _ACTION_FRAMES + _LIGHTING_FRAMES - 1
+    occlusion_start = _ACTION_FRAMES - _WAVE_HAND_FRAMES
+    occlusion_end = action_end
+
+    challenges_payload = {
+        "challenges": challenges,
+        "recording": {
+            "durationSec": (_ACTION_FRAMES + _LIGHTING_FRAMES) / _TEST_FPS,
+            "fps": _TEST_FPS,
+            "totalFrames": _ACTION_FRAMES + _LIGHTING_FRAMES,
+            "phases": {
+                "action": [0, action_end],
+                "lighting": [lighting_start, lighting_end],
+                "occlusion": [occlusion_start, occlusion_end],
+            },
+        },
+    }
+
+    light_log = seq.generate_light_log(seed=1)
+    return challenges_payload, light_log
+
+
+@requires_db
+def test_verify_returns_422_when_quality_fails(client, applicant_id, tmp_path):
+    """沒有真人臉，faceRatio 一定不合格——驗證品質不合格時走 422 路徑，
+    不會硬跑五層分析。"""
+    video_path = tmp_path / "blank.mp4"
+    total_frames = _ACTION_FRAMES + _LIGHTING_FRAMES
+    _make_test_video(video_path, total_frames, textured=False)
+
+    challenges_payload, light_log = _build_payload()
+
+    with open(video_path, "rb") as f:
+        response = client.post(
+            f"/api/applicants/{applicant_id}/verify",
+            files={"video": ("test.mp4", f, "video/mp4")},
+            data={
+                "light_log": json.dumps(light_log, ensure_ascii=False),
+                "challenges": json.dumps(challenges_payload, ensure_ascii=False),
+            },
+        )
+
+    assert response.status_code == 422
+    assert response.json()["quality"]["passed"] is False
+
+
+@requires_db
+def test_verify_full_pipeline_writes_record_when_quality_passes(
+    client, applicant_id, tmp_path, monkeypatch
+):
+    """繞過品質檢查（沒有真人臉本來就過不了，見模組頂部說明），驗證
+    五層分析＋融合決策＋資料庫寫入這條真正的管線走得通、不會崩潰，
+    且回傳的 JSON 是正確的 camelCase 格式。"""
+    monkeypatch.setattr(
+        routes,
+        "check_image_quality",
+        lambda frames: {
+            "passed": True, "blurScore": 999.0, "brightness": 120.0,
+            "contrast": 50.0, "overexposedRatio": 0.0, "faceRatio": 0.5, "message": "",
+        },
+    )
+
+    video_path = tmp_path / "textured.mp4"
+    total_frames = _ACTION_FRAMES + _LIGHTING_FRAMES
+    _make_test_video(video_path, total_frames, textured=True)
+
+    challenges_payload, light_log = _build_payload()
+
+    with open(video_path, "rb") as f:
+        response = client.post(
+            f"/api/applicants/{applicant_id}/verify",
+            files={"video": ("test.mp4", f, "video/mp4")},
+            data={
+                "light_log": json.dumps(light_log, ensure_ascii=False),
+                "challenges": json.dumps(challenges_payload, ensure_ascii=False),
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+
+    # 回傳格式：camelCase、§5.1 的完整結構
+    assert body["applicantIdMasked"] == "C56****321"
+    assert "riskScore" in body["decision"]
+    assert body["decision"]["verdict"] in ("pass", "review", "reject")
+    assert "fakeProbability" in body["synthetic"]
+    assert body["synthetic"]["fakeProbability"] == pytest.approx(0.87)  # B 的佔位版本固定值
+    assert "heartRate" in body["rppg"]
+    assert "geometryScore" in body["photometric"]
+    assert "layerScore" in body["occlusion"]
+
+    # 資料庫真的寫進去了，且欄位對得起來
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(VerificationRecordRow)
+            .filter_by(applicant_id=applicant_id)
+            .all()
+        )
+        assert len(rows) == 1
+        # DB 讀回來是 Decimal（Numeric 欄位），跟 float 比較前要先轉型
+        assert float(rows[0].synthetic_fake_probability) == pytest.approx(0.87)
+        assert rows[0].verdict == body["decision"]["verdict"]
+    finally:
+        session.close()
+
+
+@requires_db
+def test_verify_returns_404_for_nonexistent_applicant(client, tmp_path):
+    video_path = tmp_path / "x.mp4"
+    _make_test_video(video_path, 5, textured=False)
+    challenges_payload, light_log = _build_payload()
+
+    with open(video_path, "rb") as f:
+        response = client.post(
+            "/api/applicants/999999999/verify",
+            files={"video": ("test.mp4", f, "video/mp4")},
+            data={
+                "light_log": json.dumps(light_log, ensure_ascii=False),
+                "challenges": json.dumps(challenges_payload, ensure_ascii=False),
+            },
+        )
+
+    assert response.status_code == 404

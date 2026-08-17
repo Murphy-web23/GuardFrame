@@ -1,19 +1,48 @@
 """FastAPI｜路由。
 
-契約見 CONVENTIONS.md §5.5 API 契約。這裡先實作 PLAN.md 階段2 範圍內
-點名的核心端點：POST /api/applicants。sms/send、sms/verify、
-admin/login、account-setup、/verify 排在後續逐步補上（/verify 牽涉
-五層分析與資料庫寫入，是整個後端最大的一塊，另外處理）。
+契約見 CONVENTIONS.md §5.5 API 契約。這裡實作 PLAN.md 階段2 範圍內
+點名的兩個核心端點：POST /api/applicants、POST /api/applicants/{id}/
+verify。sms/send、sms/verify、admin/login、account-setup 排在階段3
+前端串接真實流程時再做。
 """
 
-from fastapi import APIRouter, Depends
+import tempfile
+from datetime import datetime
+from pathlib import Path
+
+import cv2
+import numpy as np
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
+import config
 from api.database import get_db
-from api.models import Applicant
-from common.schemas import ApplicantCreateRequest, ApplicantCreateResponse
+from api.models import Applicant, VerificationRecordRow
+from baseline_challenge.analyzer import analyze_baseline
+from common.face_utils import extract_frames
+from common.fusion import fuse_decision
+from common.schemas import (
+    ApplicantCreateRequest,
+    ApplicantCreateResponse,
+    ChallengesPayload,
+    LightLog,
+    VerificationRecord,
+)
+from image_utils.quality import check_image_quality
+from track1_synthetic.detector import detect_synthetic
+from track2_rppg.analyzer import analyze_rppg
+from track3_photometric.analyzer import analyze_photometric
+from track4_occlusion.analyzer import analyze_occlusion
+from vlm_summary.summarizer import summarize_verification
 
 router = APIRouter(prefix="/api")
+
+_ACCOUNT_RESULT_BY_VERDICT = {
+    "pass": "pending_setup",
+    "review": "pending",
+    "reject": "rejected",
+}
 
 
 def mask_id_number(id_number: str) -> str:
@@ -50,3 +79,213 @@ def create_applicant(
     db.refresh(applicant)
 
     return ApplicantCreateResponse(applicant_id=applicant.id)
+
+
+def _slice_phase(frames, span):
+    """依 phases 的 [起, 訖] 全片索引切出對應影格，起訖都算在內
+    （對照 §5.1 範例：lighting=[600,692] 對應 693 格影片裡的第 600~692
+    格，共 93 格，用 frames[600:693] 才會拿到 93 格）。"""
+    start, end = span
+    return frames[start : end + 1]
+
+
+def _sample_for_synthetic(frames, count):
+    """均勻抽樣並縮放成 224x224，供 Track 1 使用。
+
+    **這不是真正的臉部對齊。** 真正的對齊（InsightFace 五點對齊裁切）
+    是 A 的 common/face_utils.extract_face() 職責（PLAN.md 階段1「A 的
+    任務」），目前還沒實作。這裡先用簡單縮放讓 detect_synthetic() 的
+    輸入形狀符合 §4.1 契約（10 張 224×224×3），反正現在呼叫的是
+    B 佔位版本、根本不看輸入內容；等 A 補上對齊函式、交付真正的模型後，
+    這段要換成呼叫 extract_face()。
+    """
+    if not frames:
+        return []
+    indices = np.linspace(0, len(frames) - 1, count).astype(int).tolist()
+    return [cv2.resize(frames[i], (config.FACE_SIZE, config.FACE_SIZE)) for i in indices]
+
+
+@router.post("/applicants/{applicant_id}/verify", response_model=VerificationRecord)
+async def verify(
+    applicant_id: int,
+    video: UploadFile = File(...),
+    light_log: str = Form(...),
+    challenges: str = Form(...),
+    source_type: str = Form("實體相機"),
+    db: Session = Depends(get_db),
+):
+    """§5.5 核心端點：接收錄影與挑戰資料，跑五層分析，寫入資料庫。
+
+    目前不處理 15 分鐘倒數逾時（409）——那需要 §4.8 的 session 追蹤，
+    sms/send、sms/verify 那組端點還沒做，排在階段3一起補。
+
+    實作要點:
+        - Track 1 目前呼叫 B 的佔位版本（CONVENTIONS §4.10），
+          fakeProbability 永遠是 0.87，A 交付後不用改這裡一行
+        - 品質不合格時回傳 422，不執行五層分析（不合格的畫面分析出來
+          的數字不可信，見 image_utils/quality.py 頂部說明）
+        - 各 analyzer 回傳的 dict 已經是 §5.1 要求的 camelCase 格式，
+          直接嵌進 record_dict 讓 VerificationRecord.model_validate()
+          一次驗證，不用逐欄手動轉 snake_case 再轉回去
+    """
+    applicant = db.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="applicant not found")
+
+    try:
+        light_log_model = LightLog.model_validate_json(light_log)
+        challenges_payload = ChallengesPayload.model_validate_json(challenges)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"light_log/challenges 格式錯誤：{exc}")
+
+    suffix = Path(video.filename or "video.mp4").suffix or ".mp4"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(await video.read())
+        tmp_path = tmp.name
+
+    try:
+        frames, fps = extract_frames(tmp_path)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+    quality = check_image_quality(frames)
+    if not quality["passed"]:
+        # 不合格畫面不執行五層分析，直接退回。CONVENTIONS 沒有明文規定
+        # 這裡的狀態碼，422（Unprocessable Entity）比照「請求格式正確、
+        # 但語意上無法處理」的慣例用法，比硬塞一個假的 record 更誠實。
+        return JSONResponse(status_code=422, content={"quality": quality})
+
+    phases = challenges_payload.recording.phases
+    action_frames = _slice_phase(frames, phases.action)
+    lighting_frames = _slice_phase(frames, phases.lighting)
+    occlusion_frames = _slice_phase(frames, phases.occlusion)
+
+    challenge_dicts = [c.model_dump(by_alias=True) for c in challenges_payload.challenges]
+    light_log_dict = light_log_model.model_dump(by_alias=True)
+
+    baseline_result = analyze_baseline(action_frames, fps, challenge_dicts)
+
+    synthetic_raw = detect_synthetic(_sample_for_synthetic(frames, config.FRAME_COUNT))
+    fake_probability = synthetic_raw["fakeProbability"]
+    synthetic_result = {
+        "fakeProbability": fake_probability,
+        "threshold": config.SYNTHETIC_THRESHOLD,
+        "verdict": "reject" if fake_probability >= config.SYNTHETIC_THRESHOLD else "pass",
+        "topSignals": synthetic_raw["topSignals"],
+    }
+
+    rppg_result = analyze_rppg(frames, fps)
+    photometric_result = analyze_photometric(lighting_frames, fps, light_log_dict)
+    occlusion_result = analyze_occlusion(occlusion_frames, fps)
+
+    decision = fuse_decision(
+        baseline_result, synthetic_result, rppg_result, photometric_result, occlusion_result
+    )
+
+    # VLM 摘要僅於人工複核案件觸發（FR-37）。anomalyFrames 是相對
+    # occlusion 區間的索引，換算回全片索引才能從 frames 取出對應影格
+    # （CONVENTIONS §4.6 明確提醒的容易出錯之處）。
+    vlm = None
+    if decision["verdict"] == "review":
+        anomaly_indices = [
+            phases.occlusion[0] + i
+            for i in occlusion_result["anomalyFrames"]
+            if 0 <= phases.occlusion[0] + i < len(frames)
+        ]
+        anomaly_images = [frames[i] for i in anomaly_indices]
+        vlm = summarize_verification({"decision": decision}, anomaly_images)
+
+    account_result = _ACCOUNT_RESULT_BY_VERDICT[decision["verdict"]]
+    now = datetime.now()
+    duration_sec = len(frames) / fps if fps else 0.0
+    phases_dict = {
+        "action": list(phases.action),
+        "lighting": list(phases.lighting),
+        "occlusion": list(phases.occlusion),
+    }
+
+    row = VerificationRecordRow(
+        applicant_id=applicant.id,
+        timestamp=now,
+        source_type=source_type,
+        duration_sec=duration_sec,
+        fps=fps,
+        total_frames=len(frames),
+        phases=phases_dict,
+        quality_passed=quality["passed"],
+        blur_score=quality["blurScore"],
+        brightness=quality["brightness"],
+        contrast=quality["contrast"],
+        overexposed_ratio=quality["overexposedRatio"],
+        face_ratio=quality["faceRatio"],
+        quality_message=quality["message"],
+        baseline_challenges=baseline_result["challenges"],
+        baseline_verdict=baseline_result["verdict"],
+        synthetic_fake_probability=synthetic_result["fakeProbability"],
+        synthetic_threshold=synthetic_result["threshold"],
+        synthetic_verdict=synthetic_result["verdict"],
+        synthetic_top_signals=synthetic_result["topSignals"],
+        rppg_detected=rppg_result["detected"],
+        rppg_heart_rate=rppg_result["heartRate"],
+        rppg_snr=rppg_result["snr"],
+        rppg_roi_consistency=rppg_result["roiConsistency"],
+        rppg_checks=rppg_result["checks"],
+        rppg_waveform=rppg_result["waveform"],
+        rppg_spectrum=rppg_result["spectrum"],
+        photo_detected=photometric_result["detected"],
+        photo_correlation=photometric_result["correlation"],
+        photo_latency_ms=photometric_result["latencyMs"],
+        photo_geometry_score=photometric_result["geometryScore"],
+        photo_sequence=photometric_result["sequence"],
+        photo_checks=photometric_result["checks"],
+        photo_light_curve=photometric_result["lightCurve"],
+        photo_reflect_curve=photometric_result["reflectCurve"],
+        occ_detected=occlusion_result["detected"],
+        occ_wave_cycles=occlusion_result["waveCyclesDetected"],
+        occ_identity_stability=occlusion_result["identityStability"],
+        occ_max_identity_drop=occlusion_result["maxIdentityDrop"],
+        occ_segments=occlusion_result["occlusionSegments"],
+        occ_layer_score=occlusion_result["layerScore"],
+        occ_anomaly_frames=occlusion_result["anomalyFrames"],
+        occ_checks=occlusion_result["checks"],
+        occ_stability_curve=occlusion_result["stabilityCurve"],
+        risk_score=decision["riskScore"],
+        verdict=decision["verdict"],
+        verdict_label=decision["verdictLabel"],
+        reasons=decision["reasons"],
+        account_result=account_result,
+        vlm_available=vlm["available"] if vlm else None,
+        vlm_frame_observations=vlm["frameObservations"] if vlm else None,
+        vlm_summary=vlm["summary"] if vlm else None,
+        vlm_model=vlm["model"] if vlm else None,
+        vlm_latency_ms=vlm["latencyMs"] if vlm else None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    record_dict = {
+        "id": f"VF-{now:%Y%m%d}-{row.id:04d}",
+        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "applicantName": applicant.name,
+        "applicantIdMasked": applicant.id_number_masked,
+        "sourceType": source_type,
+        "recording": {
+            "durationSec": duration_sec,
+            "fps": fps,
+            "totalFrames": len(frames),
+            "phases": phases_dict,
+        },
+        "quality": quality,
+        "baseline": baseline_result,
+        "synthetic": synthetic_result,
+        "rppg": rppg_result,
+        "photometric": photometric_result,
+        "occlusion": occlusion_result,
+        "decision": decision,
+        "vlmSummary": vlm,
+        "accountResult": account_result,
+    }
+    return VerificationRecord.model_validate(record_dict)
