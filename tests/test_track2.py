@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from track2_rppg import analyzer
+from track2_rppg import signal_utils as su
 
 CONTRACT_KEYS = {
     "detected",
@@ -98,6 +99,79 @@ def test_check_labels_are_fixed_and_ordered():
     result = analyzer.analyze_rppg([], 30.0)
 
     assert [c["label"] for c in result["checks"]] == list(analyzer.CHECK_LABELS)
+
+
+# --------------------------------------------------------------------------
+# detected 必須三項判定全過（2026-08-14 修正的安全邊界）
+#
+# 真人 vs 攻擊樣本的分離度，roiConsistency（2.3-2.6 倍）比 SNR（1.6-2 dB）
+# 穩定得多，見 PHASE1_NOTES.md §5.4。如果 detected 只看 a、b 兩項，
+# 一支 SNR 剛好壓線過關、但 roiConsistency 很差的攻擊樣本就會被誤判為
+# detected=True —— 這裡用 monkeypatch 直接控制三個 ROI 的心率與 SNR，
+# 不需要真的影片就能驗證這個邊界。
+# --------------------------------------------------------------------------
+
+
+def _patch_roi_pipeline(monkeypatch, roi_results_in_order):
+    """讓 analyze_rppg 的三個 ROI 依序回傳指定的 (heart_rate, snr)，跳過真的訊號處理。"""
+    frames = [np.zeros((64, 64, 3), np.uint8)] * (config.RPPG_MIN_FRAMES + 10)
+    landmarks = [np.zeros((478, 2))] * len(frames)
+
+    monkeypatch.setattr(analyzer, "extract_landmarks", lambda f, fps: landmarks)
+    monkeypatch.setattr(
+        su, "extract_roi_signal", lambda f, lms, idx: np.zeros((len(f), 3))
+    )
+
+    results = iter(
+        {
+            "heart_rate": hr,
+            "snr": snr,
+            "filtered": np.zeros(10),
+            "psd": np.ones(10),
+            "freqs": np.linspace(0, 4, 10),
+        }
+        for hr, snr in roi_results_in_order
+    )
+    monkeypatch.setattr(analyzer, "_analyze_single_roi", lambda sig, fps: next(results))
+
+    return frames
+
+
+def test_detected_false_when_snr_passes_but_consistency_fails(monkeypatch):
+    """SNR 壓線過關但三 ROI 心率差很遠時，detected 不能是 True。
+
+    對應 ROI_DEFINITIONS 的固定順序（額頭、左頰、右頰）：
+    左頰的 SNR 全場最高（會被選為代表值），但心率跟另外兩個差了 26 bpm。
+    45.0 仍在 0.7-4 Hz 帶通範圍內（42-240 bpm），確保卡住的是一致性判定，
+    不是主頻範圍判定。
+    """
+    frames = _patch_roi_pipeline(
+        monkeypatch,
+        [(70.0, 1.0), (45.0, 5.0), (71.0, 1.2)],  # 額頭、左頰、右頰
+    )
+
+    result = analyzer.analyze_rppg(frames, 30.0)
+
+    assert result["heartRate"] == pytest.approx(45.0), "代表值仍應取 SNR 最高的 ROI"
+    assert result["snr"] == pytest.approx(5.0)
+    assert result["roiConsistency"] < config.RPPG_ROI_CONSISTENCY_MIN
+    assert result["checks"][1]["passed"] is True, "b. SNR 這項單獨看是過的"
+    assert result["checks"][2]["passed"] is False, "c. 一致性沒過"
+    assert result["detected"] is False, "即使 a、b 都過，c 沒過就不能是 detected=True"
+
+
+def test_detected_true_when_all_three_checks_pass(monkeypatch):
+    """反例：三項都過時 detected 才應該是 True，避免上面的修正矯枉過正。"""
+    frames = _patch_roi_pipeline(
+        monkeypatch,
+        [(70.0, 4.0), (71.0, 5.0), (69.5, 4.5)],
+    )
+
+    result = analyzer.analyze_rppg(frames, 30.0)
+
+    assert result["roiConsistency"] >= config.RPPG_ROI_CONSISTENCY_MIN
+    assert all(c["passed"] for c in result["checks"])
+    assert result["detected"] is True
 
 
 # --------------------------------------------------------------------------

@@ -223,7 +223,7 @@ def analyze_rppg(frames: list, fps: float) -> dict:
     參數:
         frames: list[np.ndarray]
             原始影格，RGB。**傳入整支影片的全部影格**
-            長度不固定（約 540-900，對應 18-30 秒 @ 30fps）
+            長度固定約 693（約 23 秒 @ 30fps，動作挑戰 20 秒＋照明 3 秒）
             rPPG 需要足夠時長以取得頻譜解析度，因此使用全片而非單一階段
         fps: float
 
@@ -312,7 +312,12 @@ def analyze_rppg(frames: list, fps: float) -> dict:
     ]
 
     return {
-        "detected": bool(in_band and snr_ok),
+        # 三項判定全部要過，detected 才是 True。
+        # SNR 的真人/攻擊分離度只有 1.6-2 dB（見 PHASE1_NOTES §5.4），跟
+        # roiConsistency 的 2.3-2.6 倍分離度比起來窄很多，容易被踩線通過；
+        # 若只看 a+b 兩項，一支 SNR 剛好壓線過關但 roiConsistency 很差的攻擊樣本
+        # 會被誤判為 detected=True。三項都要過，才不會讓最弱的一項單獨決定結果。
+        "detected": bool(in_band and snr_ok and consistency_ok),
         "heartRate": float(best["heart_rate"]) if in_band else None,
         "snr": float(best["snr"]),
         "roiConsistency": float(consistency),
