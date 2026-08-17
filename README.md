@@ -42,7 +42,9 @@ pytest tests/ -q
 | `image_utils/id_card.py` | 完成，合成矩形卡片驗證，真實證件照片待驗證 |
 | `baseline_challenge/` | 完成。左右轉判定用自創的幾何比例，方向待真實影片驗證，見 PHASE_NOTES |
 | `common/fusion.py` | 完成。五層加權融合＋三段式決策 |
-| `api/`、`frontend/` | 尚未開始 |
+| `common/schemas.py` | 完成。Pydantic 契約模型（snake_case 欄位＋camelCase 別名） |
+| `common/face_utils.py` | 完成 `extract_frames()`；`extract_face()`/CLIP 對齊留給 A |
+| `api/` | 核心端點完成：`POST /api/applicants`、`POST /api/applicants/{id}/verify`（含真的接 PostgreSQL）。sms/admin/account-setup 端點與 `frontend/` 尚未開始 |
 | `track1_synthetic/`、`vlm_summary/` | A 負責 |
 
 ## 需要另外取得的模型檔
