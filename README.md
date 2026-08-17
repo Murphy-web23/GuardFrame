@@ -29,25 +29,28 @@ pytest tests/ -q
 影像品質用程式生成的測試圖驗證，Track 2 的端到端測試則是畫一張臉、
 讓皮膚區域隨心跳週期變色，合成出一段「有心跳」的影片來跑。
 
-端到端測試需要 `models/face_landmarker.task`，缺檔時會自動 skip。
+端到端測試需要 `models/face_landmarker.task`、`models/hand_landmarker.task`，缺檔時會自動 skip。
 
 ## 目前進度
 
 | 模組 | 狀態 |
 |---|---|
 | `track2_rppg/` | 完成。合成影片端到端驗證：72 bpm 目標，估算誤差 0.02 bpm |
+| `track3_photometric/` | 完成（後端）。合成多區塊影格端到端驗證。`PHOTO_GEOMETRY_CV_REFERENCE` 待真實資料校準；真實影片驗證需前端顏色播放器，排階段 3 |
+| `track4_occlusion/` | 完成（後端）。合成「兩次揮手遮擋」情境端到端驗證（含身分互換、臉透出來、沒揮手三種失敗情境）。`OCC_LAYER_COLOR_REFERENCE` 待真實資料校準；鼻樑 landmark 索引待用 `draw_geometry_overlay()` 目視驗證 |
 | `image_utils/quality.py` | 完成，`faceRatio` 需 InsightFace 模型 |
 | `image_utils/id_card.py` | 尚未開始 |
-| `track3_photometric/`、`track4_occlusion/`、`baseline_challenge/`、`api/` | 尚未開始 |
+| `baseline_challenge/`、`api/`、`frontend/` | 尚未開始 |
 | `track1_synthetic/`、`vlm_summary/` | A 負責 |
 
 ## 需要另外取得的模型檔
 
-兩者都不進 git（見 `.gitignore`）：
+三者都不進 git（見 `.gitignore`）：
 
 | 模型 | 大小 | 用途 | 取得方式 |
 |---|---|---|---|
 | `models/face_landmarker.task` | 3.6 MB | MediaPipe 臉部關鍵點 | 已下載。網址見 `config.MEDIAPIPE_FACE_MODEL_URL` |
+| `models/hand_landmarker.task` | 7.5 MB | MediaPipe 手部關鍵點（Track 4） | 已下載。網址見 `config.MEDIAPIPE_HAND_MODEL_URL` |
 | InsightFace `buffalo_l` | ~300 MB | 人臉偵測與身分嵌入 | 首次呼叫時自動下載至 `~/.insightface` |
 
 > MediaPipe 1.0.0 移除了舊的 `mp.solutions` API，改用 Tasks API，

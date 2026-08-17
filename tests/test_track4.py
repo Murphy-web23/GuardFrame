@@ -268,6 +268,13 @@ def test_layer_consistency_score_zero_when_no_segments():
 # --------------------------------------------------------------------------
 
 
+requires_hand_model = pytest.mark.skipif(
+    not config.MEDIAPIPE_HAND_MODEL.exists(),
+    reason=f"缺少 MediaPipe Hand 模型檔：{config.MEDIAPIPE_HAND_MODEL}",
+)
+
+
+@requires_hand_model
 def test_extract_hand_landmarks_returns_none_for_blank_frames():
     frame = np.zeros((100, 100, 3), dtype=np.uint8)
     results = ht.extract_hand_landmarks([frame, frame], fps=30.0)
