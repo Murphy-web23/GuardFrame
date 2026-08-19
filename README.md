@@ -37,15 +37,23 @@ pytest tests/ -q
 |---|---|
 | `track2_rppg/` | 完成。合成影片端到端驗證：72 bpm 目標，估算誤差 0.02 bpm |
 | `track3_photometric/` | 完成（後端）。合成多區塊影格端到端驗證。`PHOTO_GEOMETRY_CV_REFERENCE` 待真實資料校準；真實影片驗證需前端顏色播放器，排階段 3 |
-| `track4_occlusion/` | 完成（後端）。合成「兩次揮手遮擋」情境端到端驗證（含身分互換、臉透出來、沒揮手三種失敗情境）。`OCC_LAYER_COLOR_REFERENCE` 待真實資料校準；鼻樑 landmark 索引待用 `draw_geometry_overlay()` 目視驗證 |
+| `track4_occlusion/` | 完成（後端）。合成「兩次揮手遮擋」情境端到端驗證（含身分互換、臉透出來、沒揮手三種失敗情境）。真人自測發現 `maxIdentityDrop` 對手部部分遮擋過度敏感，待更多樣本後校準，見 PHASE1_NOTES §2.6 |
 | `image_utils/quality.py` | 完成，`faceRatio` 需 InsightFace 模型 |
 | `image_utils/id_card.py` | 完成，合成矩形卡片驗證，真實證件照片待驗證 |
-| `baseline_challenge/` | 完成。左右轉判定用自創的幾何比例，方向待真實影片驗證，見 PHASE_NOTES |
-| `common/fusion.py` | 完成。五層加權融合＋三段式決策 |
+| `baseline_challenge/` | 完成。左右轉判定用自創的幾何比例，方向已用真實自錄影片驗證並修正（2026-08-18） |
+| `common/fusion.py` | 完成。五層加權融合＋三段式決策，2026-08-19 改用連續信心分數（見下方說明），不再是二值化風險 |
+| `common/risk.py` | 完成。sigmoid 平滑「數值 vs 門檻」判定的共用工具，供各 track 算 `confidenceScore` |
 | `common/schemas.py` | 完成。Pydantic 契約模型（snake_case 欄位＋camelCase 別名） |
 | `common/face_utils.py` | 完成 `extract_frames()`；`extract_face()`/CLIP 對齊留給 A |
-| `api/` | 核心端點完成：`POST /api/applicants`、`POST /api/applicants/{id}/verify`（含真的接 PostgreSQL）。sms/admin/account-setup 端點與 `frontend/` 尚未開始 |
-| `track1_synthetic/`、`vlm_summary/` | A 負責 |
+| `api/` | 核心端點完成：`POST /api/applicants`、`POST /api/applicants/{id}/verify`（含真的接 PostgreSQL）。sms/admin/account-setup 端點與 `frontend/` 尚未開始，CORS 尚未設定 |
+| `track1_synthetic/`、`vlm_summary/` | A 負責，目前放了 B 的佔位版本讓系統能先跑通 |
+
+### 2026-08-19：五層改用連續信心分數
+
+對照組、Track 2/3/4 原本用二值化風險（沒過門檻=100分風險、過了=0分），
+現在跟 Track 1 一樣統一輸出 `confidenceScore`（0.0-1.0，數值越高代表
+越可疑），能反映「證據有多強」而不只是「有沒有超過門檻」。詳細設計、
+新增常數、優缺點見 `PHASE1_NOTES.md` §四之二。
 
 ## 需要另外取得的模型檔
 
