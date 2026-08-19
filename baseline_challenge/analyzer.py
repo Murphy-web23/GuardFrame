@@ -18,8 +18,11 @@ facial_transformation_matrixes 是一個 4x4 剛體變換矩陣，要從中解�
 已知轉頭方向去對照才能驗證解出來的角度對不對——而現在沒有這樣的影片。
 改用關鍵點幾何比例後，正確性可以直接用合成座標驗證（見
 tests/test_baseline.py），不用等真實影片。代價是這是自創的量化方式，
-沒有文獻參考值，方向與門檻都必須在有真實轉頭影片後重新驗證，
-見 config.BASELINE_YAW_RATIO_MIN 的註解。
+沒有文獻參考值，方向與門檻原本都需要真實轉頭影片才能驗證。
+
+**2026-08-18 已用真實自錄影片驗證過方向**：見下方 _YAW_SIGN 的說明。
+門檻的確切數值（config.BASELINE_YAW_RATIO_MIN）還沒用邊界案例校準過，
+待更多真實樣本後調整。
 """
 
 import numpy as np
@@ -115,9 +118,11 @@ NOSE_TIP_INDEX = 1
 LEFT_FACE_EDGE_INDEX = 234
 RIGHT_FACE_EDGE_INDEX = 454
 
-# 動作名稱到不對稱比例正負號的對應——哪個方向算「正」是目前的假設，
-# 待真實影片驗證方向是否正確，見模組頂部說明。
-_YAW_SIGN = {"turn_left": 1.0, "turn_right": -1.0}
+# 動作名稱到不對稱比例正負號的對應。
+# 2026-08-18 用真實自錄影片驗證過（notebooks/b_03_self_test.py 的時間
+# 序列圖 + 使用者回報實際轉頭方向對照）：真人左轉時 _yaw_ratio 量到的是
+# 負值，右轉是正值——跟原本的假設（正=左轉）方向相反，這裡已經對調。
+_YAW_SIGN = {"turn_left": -1.0, "turn_right": 1.0}
 
 
 def _yaw_ratio(landmarks):
@@ -212,6 +217,7 @@ def _reject_result(challenges):
         ],
         "verdict": "reject",
         "verdictLabel": "動作挑戰未完成",
+        "confidenceScore": 1.0,
     }
 
 
@@ -234,7 +240,12 @@ def analyze_baseline(frames: list, fps: float, challenges: list) -> dict:
                 {"action": str, "name": str, "durationSec": int, "passed": bool}
             ],
             "verdict": "pass" | "reject",
-            "verdictLabel": str
+            "verdictLabel": str,
+            "confidenceScore": float   # 0.0-1.0，連續風險信心分數，四個
+                                       # 動作裡失敗的比例，數值越高代表
+                                       # 越可疑，供 common/fusion.py 加權
+                                       # 融合用（§2 允許新增欄位，不在
+                                       # 原始契約清單）
         }
 
     備註:
@@ -270,9 +281,19 @@ def analyze_baseline(frames: list, fps: float, challenges: list) -> dict:
         start = end
 
     verdict_pass = all(r["passed"] for r in results)
+
+    # 連續信心分數：四個動作裡失敗的比例。跟其他 track 用 sigmoid 平滑
+    # 「數值 vs 門檻」不同——這裡的四個判定本質上是離散事件（有沒有偵測到
+    # 一次完整眨眼、有沒有偵測到轉頭達標、有沒有偵測到揮手循環），沒有
+    # 天然的連續量測值可以套 sigmoid，用「失敗比例」是最直接誠實的
+    # 連續化方式：失敗 1 項是 0.25、2 項是 0.5，以此類推。
+    failed_count = sum(1 for r in results if not r["passed"])
+    confidence_score = failed_count / len(results)
+
     return {
         "standard": STANDARD_LABEL,
         "challenges": results,
         "verdict": "pass" if verdict_pass else "reject",
         "verdictLabel": "判定為真人" if verdict_pass else "動作挑戰未完成",
+        "confidenceScore": confidence_score,
     }

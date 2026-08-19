@@ -173,9 +173,9 @@ def _build_all_pass_scenario():
     landmarks[1] = _eyes_landmarks(half_open=0.3)   # 閉眼
     landmarks[2] = _eyes_landmarks(half_open=3.0)   # 再睜開 -> 完整一次眨眼
     for i in range(3, 8):
-        landmarks[i] = _yaw_landmarks(-5.0)          # turn_left 視窗，比例為正
+        landmarks[i] = _yaw_landmarks(5.0)           # turn_left 視窗，比例為負（真實驗證過的方向）
     for i in range(8, 13):
-        landmarks[i] = _yaw_landmarks(5.0)           # turn_right 視窗，比例為負
+        landmarks[i] = _yaw_landmarks(-5.0)          # turn_right 視窗，比例為正
 
     face_data, hand_data = {}, {}
     # wave_hand 視窗（13-19）：out,in,out,in,out,in,out -> 3 個完整循環
@@ -220,6 +220,7 @@ def test_analyze_baseline_all_pass_when_all_actions_satisfied(monkeypatch):
     assert result["verdict"] == "pass"
     assert result["verdictLabel"] == "判定為真人"
     assert result["standard"] == "ISO/IEC 30107-3 動作挑戰"
+    assert result["confidenceScore"] == 0.0
 
 
 def test_analyze_baseline_rejects_when_one_action_fails(monkeypatch):
@@ -233,6 +234,7 @@ def test_analyze_baseline_rejects_when_one_action_fails(monkeypatch):
     assert [c["passed"] for c in result["challenges"]] == [True, True, False, True]
     assert result["verdict"] == "reject"
     assert result["verdictLabel"] == "動作挑戰未完成"
+    assert result["confidenceScore"] == pytest.approx(0.25)  # 4 項裡失敗 1 項
 
 
 def test_analyze_baseline_empty_frames_returns_reject():

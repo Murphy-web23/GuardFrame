@@ -84,6 +84,15 @@ RPPG_SPECTRUM_POINTS = 64
 RPPG_SPECTRUM_MAX_HZ = 4.0
 RPPG_WAVEFORM_POINTS = 300
 
+# Track 2｜信心分數的 sigmoid 平滑寬度
+# 用於 common.risk.threshold_risk()，把 SNR/roiConsistency 的判定從
+# 二值化改成連續信心分數。SNR 寬度抓 1.5 dB，依據 PHASE1_NOTES §5.4
+# 記錄的真人/攻擊分離度（1.6-2 dB）取中間值，這個是少數有真實資料
+# 依據的 scale；roiConsistency 寬度 0.15 沒有實測依據，是合理猜測，
+# 兩者都待更多真實樣本後重新檢視。
+RPPG_SNR_RISK_SCALE = 1.5
+RPPG_CONSISTENCY_RISK_SCALE = 0.15
+
 # Track 2｜SNR 訊號帶半寬（Hz）
 # 算 SNR 時把「主峰 ±此值」與「二次諧波 ±此值」視為訊號，帶內其餘視為雜訊。
 # 心跳波形不是純正弦，二次諧波帶有真實的生理能量，要算進訊號側。
@@ -145,10 +154,22 @@ BASELINE_EAR_THRESHOLD = 0.21
 # 對照組｜左右轉頭的不對稱比例門檻
 # 這裡沒有用 PLAN.md 建議的「頭部變換矩陣 yaw 角」，改用鼻尖到左右臉頰
 # 邊緣的距離不對稱比例——理由見 baseline_challenge/analyzer.py 頂部說明。
-# 這是自創的量化方式，完全沒有文獻參考值，數字純粹是合理範圍的猜測，
-# **必須**用真實轉頭影片驗證方向對不對、閾值合不合理，優先序高於
-# Track3/4 那幾個已標註待驗證的門檻（那些至少有相近的驗證方法論）。
+# 這是自創的量化方式，沒有文獻參考值。
+# 2026-08-18 用真實自錄影片驗證過方向（見 _YAW_SIGN 的說明）：轉頭時
+# 量到的比例幅度約 ±0.8，遠超過這裡的 0.15 門檻，數量級沒問題；
+# 0.15 這個確切數字本身還是猜的，尚未用邊界案例（例如轉頭幅度很小）
+# 校準過，可能偏鬆或偏緊，待更多真實樣本後調整。
 BASELINE_YAW_RATIO_MIN = 0.15
+
+# Track 4｜信心分數的 sigmoid 平滑寬度
+# 全部沒有真實資料依據，是合理猜測，待真實樣本後重新檢視——這一層
+# 尤其該優先處理，因為 PHASE1_NOTES §2.6 已經記錄過一個真實案例
+# （手部部分遮擋造成 maxIdentityDrop 誤判），連帶影響這裡的 scale
+# 選得合不合理。
+OCC_CYCLES_RISK_SCALE = 1.0  # 次數
+OCC_STABILITY_RISK_SCALE = 0.05
+OCC_DROP_RISK_SCALE = 0.10
+OCC_LAYER_RISK_SCALE = 0.15
 
 # Track 4｜臉部參考框擴張比例
 # 手部中心座標要落在「擴張過的臉部框」內才算遮擋中，不是原始 bbox——
@@ -169,6 +190,12 @@ OCC_LAYER_COLOR_REFERENCE = 40.0
 # PHASE1_NOTES §七 提到的「隔格抽樣」階段再做，不在這裡先猜著調。
 INSIGHTFACE_CTX_ID = -1
 INSIGHTFACE_DET_SIZE = (640, 640)
+
+# Track 3｜信心分數的 sigmoid 平滑寬度
+# 三個都沒有真實資料依據，是合理猜測，待真實樣本後重新檢視。
+PHOTO_CORRELATION_RISK_SCALE = 0.15
+PHOTO_LATENCY_RISK_SCALE = 30.0  # 毫秒
+PHOTO_GEOMETRY_RISK_SCALE = 0.15
 
 # Track 3｜臉部偵測率門檻
 # 跟 RPPG_MIN_FACE_RATIO 同樣的道理：偵測到臉的影格佔比太低，

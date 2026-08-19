@@ -4,19 +4,25 @@
 用這支腳本快速檢查幾件事：
 
     1. landmark 疊圖對不對——額頭/雙頰/眼睛/鼻樑/臉頰邊緣的框有沒有框對
-    2. 轉頭方向對不對——這是目前最大的未知數，見 PHASE1_NOTES §三之一
-    3. 眨眼有沒有正確抓到
-    4. （影片夠長的話）rPPG 心率跟手錶量的準不準
-    5. Track 4 的揮手循環偵測跟身分穩定度合不合理
+    2. 眨眼/轉左/轉右有沒有被正確判定為通過（不是只看訊號的圖，
+       是真的呼叫跟正式管線一樣的判定函式）
+    3. （影片夠長的話）rPPG 心率跟手錶量的準不準
+    4. Track 4 的揮手循環偵測跟身分穩定度合不合理
 
 用法：
     venv\\Scripts\\python.exe notebooks\\b_03_self_test.py 你的影片.mp4
+    venv\\Scripts\\python.exe notebooks\\b_03_self_test.py 你的影片.mp4 --track4-range 15 22
+
+    --track4-range 開始秒數 結束秒數
+        只把這個時間範圍內的影格交給 Track 4 分析，不用整支影片跑。
+        Track 4 用 InsightFace 逐格偵測，CPU 上處理整支長影片可能要
+        好幾分鐘；只給揮手那幾秒可以快很多。不指定的話還是跑整支影片。
 
 輸出（存在跟輸入影片同一個資料夾）：
     《檔名》_landmarks.jpg   —— Track 2 ROI + 對照組關鍵點疊圖
     《檔名》_geometry.jpg    —— Track 3 立體幾何四區疊圖
     《檔名》_timeline.png    —— EAR／yaw_ratio 隨時間變化的圖
-    終端機印出 rPPG／Track4 的數字結果
+    終端機印出對照組／rPPG／Track4 的判定結果
 """
 
 import sys
@@ -48,6 +54,9 @@ from baseline_challenge.analyzer import (
     RIGHT_EYE_INDICES,
     RIGHT_FACE_EDGE_INDEX,
     _average_ear,
+    _check_blink,
+    _check_turn_left,
+    _check_turn_right,
     _yaw_ratio,
 )
 from common.face_utils import extract_frames
@@ -71,7 +80,7 @@ def _draw_baseline_points(frame, landmarks):
     return overlay
 
 
-def main(video_path):
+def main(video_path, track4_range=None):
     video_path = Path(video_path)
     stem = video_path.parent / video_path.stem
 
@@ -112,10 +121,10 @@ def main(video_path):
     cv2.imwrite(geometry_path, cv2.cvtColor(geo_overlay, cv2.COLOR_RGB2BGR))
     print(f"\n已存 Track 3 幾何區域疊圖：{geometry_path}")
     print("  打開看：綠=額頭、黃=鼻樑、紅=左頰、藍=右頰。")
-    print("  鼻樑（黃色）這組索引完全沒驗證過，這張圖沒對的話 Track 3 的")
-    print("  立體幾何判定不能信。")
 
     # 2. 時間序列：EAR、yaw_ratio，方便對照「幾秒做了什麼動作」
+    #    正負號對應見 baseline_challenge.analyzer._YAW_SIGN
+    #    （2026-08-18 已用真實影片驗證過：左轉是負值、右轉是正值）。
     times, ear_values, yaw_values = [], [], []
     for i, lm in enumerate(landmarks_list):
         if lm is None:
@@ -138,28 +147,35 @@ def main(video_path):
     axes[1].plot(times, yaw_values)
     axes[1].axhline(0, color="gray", linewidth=0.8)
     axes[1].axhline(
-        config.BASELINE_YAW_RATIO_MIN, color="red", linestyle="--",
-        label=f"turn_left 門檻 +{config.BASELINE_YAW_RATIO_MIN}",
+        config.BASELINE_YAW_RATIO_MIN, color="orange", linestyle="--",
+        label=f"turn_right 門檻 +{config.BASELINE_YAW_RATIO_MIN}",
     )
     axes[1].axhline(
-        -config.BASELINE_YAW_RATIO_MIN, color="orange", linestyle="--",
-        label=f"turn_right 門檻 -{config.BASELINE_YAW_RATIO_MIN}",
+        -config.BASELINE_YAW_RATIO_MIN, color="red", linestyle="--",
+        label=f"turn_left 門檻 -{config.BASELINE_YAW_RATIO_MIN}",
     )
     axes[1].set_ylabel("yaw_ratio（轉頭）")
     axes[1].set_xlabel("時間（秒）")
-    axes[1].set_title("正值超過紅線 = 判定為 turn_left，負值超過橘線 = 判定為 turn_right")
+    axes[1].set_title("負值超過紅線 = 判定為 turn_left，正值超過橘線 = 判定為 turn_right")
     axes[1].legend()
 
     plt.tight_layout()
     timeline_path = f"{stem}_timeline.png"
     plt.savefig(timeline_path, dpi=120)
     print(f"\n已存時間序列圖：{timeline_path}")
-    print("  打開看：回想你幾秒的時候做了什麼動作，對照那個時間點的線有沒有")
-    print("  對應變化——尤其是轉頭，正值/負值有沒有跟你實際轉的方向一致。")
-    print("  如果『左轉』時線是負的、『右轉』時線是正的，代表方向猜反了，")
-    print("  要把 baseline_challenge/analyzer.py 的 _YAW_SIGN 兩個值對調。")
 
-    # 3. rPPG（心率）
+    # 3. 對照組：眨眼/左轉/右轉是否「有通過」——直接呼叫跟正式管線一樣的
+    #    判定函式跑整支影片，不是只看訊號的圖形猜。揮手判定沒有放在這裡，
+    #    因為它需要另外偵測手部，跟下面的 Track 4 一起看即可。
+    print("\n對照組判定（用整支影片，不分窗——正式管線會依 challenges 切窗，")
+    print("這裡只是想知道『這個動作有沒有在影片裡的任何時刻被偵測到』）：")
+    print(f"  眨眼（blink）：{'✓ 通過' if _check_blink(frames, fps) else '✗ 沒偵測到'}")
+    print(f"  左轉（turn_left）：{'✓ 通過' if _check_turn_left(frames, fps) else '✗ 沒偵測到'}")
+    print(f"  右轉（turn_right）：{'✓ 通過' if _check_turn_right(frames, fps) else '✗ 沒偵測到'}")
+    print("  這三個結果如果跟你實際做的動作對不起來（例如你有轉左但顯示沒偵測到，")
+    print("  或者兩個方向都顯示通過），代表門檻或方向還有問題，回頭看 timeline 圖。")
+
+    # 4. rPPG（心率）
     if len(frames) >= config.RPPG_MIN_FRAMES:
         print("\n跑 Track 2（心率）...")
         rppg = analyze_rppg(frames, fps)
@@ -171,13 +187,29 @@ def main(video_path):
         )
         print(f"  detected：{rppg['detected']}")
         print("  跟你手錶/手機同時量到的心率對一下，誤差在 5 bpm 內算正常。")
+        print("  注意：這是整支影片的訊號，如果影片裡有轉頭/揮手等大動作，")
+        print("  動作造成的雜訊會蓋過心跳訊號，測不準是預期的，不代表演算法有問題。")
     else:
         print(f"\n影片太短（{len(frames)} 格 < {config.RPPG_MIN_FRAMES} 格），跳過 Track 2。")
 
-    # 4. Track 4（遮擋一致性，用整支影片，不分段——這是快速自測，
-    #    不是正式管線，正式管線只會傳入 wave_hand 那 7 秒）
-    print("\n跑 Track 4（遮擋，用整支影片）...")
-    occ = analyze_occlusion(frames, fps)
+    # 5. Track 4（遮擋一致性）。不指定 --track4-range 的話用整支影片，
+    #    但 InsightFace 逐格偵測在 CPU 上很慢，長影片建議指定範圍。
+    if track4_range:
+        start_sec, end_sec = track4_range
+        start_frame = max(0, int(start_sec * fps))
+        end_frame = min(len(frames), int(end_sec * fps))
+        track4_frames = frames[start_frame:end_frame]
+        print(
+            f"\n跑 Track 4（遮擋，只取 {start_sec}-{end_sec} 秒，"
+            f"共 {len(track4_frames)} 格）..."
+        )
+    else:
+        track4_frames = frames
+        print(f"\n跑 Track 4（遮擋，用整支影片 {len(frames)} 格——")
+        print("  InsightFace 在 CPU 上逐格跑，格數多的話會等好幾分鐘，")
+        print("  下次可以加 --track4-range 開始秒 結束秒 只跑揮手那一段）...")
+
+    occ = analyze_occlusion(track4_frames, fps)
     print(f"  偵測到 {occ['waveCyclesDetected']} 次揮手循環")
     print(
         f"  身分穩定度：{occ['identityStability']:.3f}"
@@ -190,7 +222,15 @@ def main(video_path):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("用法：python notebooks/b_03_self_test.py 你的影片.mp4")
+    args = sys.argv[1:]
+    if not args:
+        print("用法：python notebooks/b_03_self_test.py 你的影片.mp4 [--track4-range 開始秒 結束秒]")
         sys.exit(1)
-    main(sys.argv[1])
+
+    video_arg = args[0]
+    range_arg = None
+    if "--track4-range" in args:
+        idx = args.index("--track4-range")
+        range_arg = (float(args[idx + 1]), float(args[idx + 2]))
+
+    main(video_arg, track4_range=range_arg)
