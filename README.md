@@ -45,7 +45,7 @@ pytest tests/ -q
 | `common/risk.py` | 完成。sigmoid 平滑「數值 vs 門檻」判定的共用工具，供各 track 算 `confidenceScore` |
 | `common/schemas.py` | 完成。Pydantic 契約模型（snake_case 欄位＋camelCase 別名） |
 | `common/face_utils.py` | 完成 `extract_frames()`；`extract_face()`/CLIP 對齊留給 A |
-| `api/` | 核心端點完成：`POST /api/applicants`、`POST /api/applicants/{id}/verify`（含真的接 PostgreSQL）。sms/admin/account-setup 端點與 `frontend/` 尚未開始，CORS 尚未設定 |
+| `api/` | 核心端點完成：`POST /api/applicants`、`POST /api/applicants/{id}/verify`（含真的接 PostgreSQL）。CORS 已開放（開發階段 `allow_origins=["*"]`，正式環境要改成前端實際網域）。sms/admin/account-setup 端點與 `frontend/` 尚未開始 |
 | `track1_synthetic/`、`vlm_summary/` | A 負責，目前放了 B 的佔位版本讓系統能先跑通 |
 
 ### 2026-08-19：五層改用連續信心分數
