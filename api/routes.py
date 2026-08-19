@@ -1,18 +1,20 @@
 """FastAPI｜路由。
 
-契約見 CONVENTIONS.md §5.5 API 契約。這裡實作 PLAN.md 階段2 範圍內
-點名的兩個核心端點：POST /api/applicants、POST /api/applicants/{id}/
-verify。sms/send、sms/verify、admin/login、account-setup 排在階段3
-前端串接真實流程時再做。
+契約見 CONVENTIONS.md §5.5 API 契約。2026-08-19 補上 §4.8 的簡訊驗證＋
+Session 機制（sms/send、sms/verify、account-setup、reset）——這四個
+互相依賴（session_id 是 sms/verify 產生的，其餘三個都要驗證它），
+沒辦法只做其中一個。admin/login、admin/records 是另一套給行員用的
+機制（§4.9，帳號密碼＋bcrypt），跟這裡的申請人 session 無關，還沒做。
 """
 
+import secrets
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -23,10 +25,17 @@ from baseline_challenge.analyzer import analyze_baseline
 from common.face_utils import extract_frames
 from common.fusion import fuse_decision
 from common.schemas import (
+    AccountSetupRequest,
+    AccountSetupResponse,
     ApplicantCreateRequest,
     ApplicantCreateResponse,
     ChallengesPayload,
     LightLog,
+    ResetResponse,
+    SmsSendRequest,
+    SmsSendResponse,
+    SmsVerifyRequest,
+    SmsVerifyResponse,
     VerificationRecord,
 )
 from image_utils.quality import check_image_quality
@@ -54,6 +63,105 @@ def mask_id_number(id_number: str) -> str:
     if len(id_number) <= 6:
         return "*" * len(id_number)
     return id_number[:3] + "*" * (len(id_number) - 6) + id_number[-3:]
+
+
+def _require_session(applicant: Applicant, x_session_id: str, *, check_deadline: bool) -> None:
+    """§4.8 session 驗證：證明這個請求真的是剛完成簡訊驗證的那個人送出的，
+    不是有人猜到 applicantId 就能亂呼叫。session_id 放在 X-Session-Id
+    header（不塞進 request body，不用改動 §5.5 已經定義好的欄位）。
+
+    check_deadline 只有 /verify 要開——§5.6 流程圖：15 分鐘倒數只涵蓋
+    ③④兩步驟，/account-setup 與 /reset 不檢查是否逾時。
+    """
+    if not applicant.session_id or applicant.session_id != x_session_id:
+        raise HTTPException(status_code=401, detail="session 無效或不屬於此申請人")
+    if check_deadline and datetime.now() > applicant.session_deadline_at:
+        raise HTTPException(status_code=409, detail="session 已逾時，請重新完成簡訊驗證")
+
+
+@router.post("/applicants/{applicant_id}/sms/send", response_model=SmsSendResponse)
+def send_sms(
+    applicant_id: int, payload: SmsSendRequest, db: Session = Depends(get_db)
+) -> SmsSendResponse:
+    """§4.8／§5.5：Demo 模式固定驗證碼，不接真的簡訊服務商。每次呼叫
+    重設驗證碼與錯誤次數，讓使用者連續錯誤 3 次（403）後能重新取得機會。
+    """
+    applicant = db.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="applicant not found")
+
+    applicant.sms_code = config.SMS_DEMO_CODE
+    applicant.sms_attempts = 0
+    db.commit()
+    return SmsSendResponse(sent=True)
+
+
+@router.post("/applicants/{applicant_id}/sms/verify", response_model=SmsVerifyResponse)
+def verify_sms(
+    applicant_id: int, payload: SmsVerifyRequest, db: Session = Depends(get_db)
+) -> SmsVerifyResponse:
+    """§4.8／§5.5：驗證碼正確時產生 session_id、啟動 15 分鐘全域倒數。
+    deadlineAt 由後端算並回傳，前端只能顯示、不能自行計算截止時間
+    （避免使用者調整系統時間繞過限制，§4.8 明文要求）。
+    """
+    applicant = db.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="applicant not found")
+
+    # 沒發過驗證碼、或已經連續錯誤達上限：兩種情況都是「目前沒有可核對的
+    # 有效驗證碼」，必須重新呼叫 sms/send 才能繼續，直接擋在比對碼之前
+    # ——不能讓已經鎖住的驗證碼，之後靠對到正確碼就矇混過關。
+    if applicant.sms_code is None or applicant.sms_attempts >= config.SMS_MAX_ATTEMPTS:
+        raise HTTPException(status_code=403, detail="連續錯誤已達上限，請重新發送簡訊")
+
+    if payload.code != applicant.sms_code:
+        applicant.sms_attempts += 1
+        exhausted = applicant.sms_attempts >= config.SMS_MAX_ATTEMPTS
+        db.commit()
+        if exhausted:
+            raise HTTPException(status_code=403, detail="連續錯誤 3 次，請重新發送簡訊")
+        raise HTTPException(status_code=400, detail="驗證碼錯誤")
+
+    now = datetime.now()
+    applicant.session_id = secrets.token_urlsafe(config.SESSION_TOKEN_BYTES)
+    applicant.sms_verified_at = now
+    applicant.session_deadline_at = now + timedelta(minutes=config.SESSION_DEADLINE_MINUTES)
+    applicant.sms_code = None
+    applicant.sms_attempts = 0
+    db.commit()
+
+    return SmsVerifyResponse(
+        success=True,
+        session_id=applicant.session_id,
+        sms_verified_at=applicant.sms_verified_at.isoformat(),
+        deadline_at=applicant.session_deadline_at.isoformat(),
+    )
+
+
+@router.post("/applicants/{applicant_id}/reset", response_model=ResetResponse)
+def reset_session(
+    applicant_id: int,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    db: Session = Depends(get_db),
+) -> ResetResponse:
+    """§4.8：15 分鐘倒數歸零時前端呼叫，捨棄本輪未提交資料，退回步驟①。
+
+    目前的 /verify 是「五層分析完成才一次寫入資料庫」，沒有「草稿」狀態
+    的 verification_records 存在，所以這裡不需要刪除任何列——真正要
+    捨棄的只有 session 本身。
+    """
+    applicant = db.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="applicant not found")
+
+    _require_session(applicant, x_session_id, check_deadline=False)
+
+    applicant.session_id = None
+    applicant.sms_verified_at = None
+    applicant.session_deadline_at = None
+    db.commit()
+
+    return ResetResponse(reset=True)
 
 
 @router.post("/applicants", response_model=ApplicantCreateResponse, status_code=201)
@@ -112,12 +220,13 @@ async def verify(
     light_log: str = Form(...),
     challenges: str = Form(...),
     source_type: str = Form("實體相機"),
+    x_session_id: str = Header(..., alias="X-Session-Id"),
     db: Session = Depends(get_db),
 ):
     """§5.5 核心端點：接收錄影與挑戰資料，跑五層分析，寫入資料庫。
 
-    目前不處理 15 分鐘倒數逾時（409）——那需要 §4.8 的 session 追蹤，
-    sms/send、sms/verify 那組端點還沒做，排在階段3一起補。
+    2026-08-19 補上 15 分鐘倒數逾時檢查（409）——§4.8 的 session 追蹤，
+    sms/verify 那組端點現在有了，見 verify_sms()／_require_session()。
 
     實作要點:
         - Track 1 目前呼叫 B 的佔位版本（CONVENTIONS §4.10），
@@ -131,6 +240,8 @@ async def verify(
     applicant = db.get(Applicant, applicant_id)
     if applicant is None:
         raise HTTPException(status_code=404, detail="applicant not found")
+
+    _require_session(applicant, x_session_id, check_deadline=True)
 
     try:
         light_log_model = LightLog.model_validate_json(light_log)
@@ -289,3 +400,46 @@ async def verify(
         "accountResult": account_result,
     }
     return VerificationRecord.model_validate(record_dict)
+
+
+@router.post("/applicants/{applicant_id}/account-setup", response_model=AccountSetupResponse)
+def setup_account(
+    applicant_id: int,
+    payload: AccountSetupRequest,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    db: Session = Depends(get_db),
+) -> AccountSetupResponse:
+    """§5.8 對應 PRD 步驟⑤。只能在最近一筆驗證紀錄的 accountResult 是
+    pending_setup 時成功——防止還沒通過驗證、或已經開戶完成後被重複呼叫
+    （見 §5.8 accountResult 狀態機）。
+
+    transactionPassword「6 位數字」、termsAccepted 必須為 true 的檢查
+    手動做、回傳明確的 400（§5.8 寫的是 400，不是 FastAPI 預設的 422）。
+    """
+    applicant = db.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="applicant not found")
+
+    _require_session(applicant, x_session_id, check_deadline=False)
+
+    if not payload.terms_accepted:
+        raise HTTPException(status_code=400, detail="必須同意條款才能開戶")
+    if not (payload.transaction_password.isdigit() and len(payload.transaction_password) == 6):
+        raise HTTPException(status_code=400, detail="交易密碼須為 6 位數字")
+
+    latest = (
+        db.query(VerificationRecordRow)
+        .filter_by(applicant_id=applicant_id)
+        .order_by(VerificationRecordRow.id.desc())
+        .first()
+    )
+    # CONVENTIONS §5.8 沒有明文規定這裡的狀態碼，409（Conflict）比照
+    # /verify 的 session 逾時用法（同一份文件裡的用法）：目前狀態不允許
+    # 這個操作，不是請求格式本身有問題。
+    if latest is None or latest.account_result != "pending_setup":
+        raise HTTPException(status_code=409, detail="目前狀態無法設定帳戶")
+
+    latest.account_result = "opened"
+    db.commit()
+
+    return AccountSetupResponse(success=True, account_result="opened")

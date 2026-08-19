@@ -9,8 +9,9 @@ Postgres。沒有可用連線時自動 skip。
 """
 
 import json
+import secrets
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -21,6 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 
+import config
 import api.routes as routes
 from api.database import DATABASE_URL, SessionLocal
 from api.main import app
@@ -89,6 +91,24 @@ def applicant_id():
         session.close()
 
 
+@pytest.fixture
+def session_headers(applicant_id):
+    """/verify 現在要求 X-Session-Id header（§4.8）。直接寫 DB 建立一個
+    未過期的 session，不用真的先跑 sms/send + sms/verify——那組流程有
+    自己獨立的測試（tests/test_api_session.py），這裡只關心 /verify
+    本身的管線走不走得通。"""
+    token = secrets.token_urlsafe(config.SESSION_TOKEN_BYTES)
+    session = SessionLocal()
+    try:
+        applicant = session.get(Applicant, applicant_id)
+        applicant.session_id = token
+        applicant.session_deadline_at = datetime.now() + timedelta(minutes=15)
+        session.commit()
+    finally:
+        session.close()
+    return {"X-Session-Id": token}
+
+
 def _make_test_video(path, num_frames, size=100, textured=False):
     """畫一支測試影片。textured=True 時每格畫隨機雜訊塊，有邊緣/對比，
     但仍然沒有真人臉，faceRatio 還是會不合格。"""
@@ -138,7 +158,7 @@ def _build_payload():
 
 
 @requires_db
-def test_verify_returns_422_when_quality_fails(client, applicant_id, tmp_path):
+def test_verify_returns_422_when_quality_fails(client, applicant_id, session_headers, tmp_path):
     """沒有真人臉，faceRatio 一定不合格——驗證品質不合格時走 422 路徑，
     不會硬跑五層分析。"""
     video_path = tmp_path / "blank.mp4"
@@ -155,6 +175,7 @@ def test_verify_returns_422_when_quality_fails(client, applicant_id, tmp_path):
                 "light_log": json.dumps(light_log, ensure_ascii=False),
                 "challenges": json.dumps(challenges_payload, ensure_ascii=False),
             },
+            headers=session_headers,
         )
 
     assert response.status_code == 422
@@ -162,8 +183,61 @@ def test_verify_returns_422_when_quality_fails(client, applicant_id, tmp_path):
 
 
 @requires_db
+def test_verify_returns_401_without_session_header(client, applicant_id, tmp_path):
+    """§4.8：沒帶 X-Session-Id 或帶錯的值，不能跑到五層分析——驗證任何人
+    猜到 applicantId 也不能亂呼叫這支端點。"""
+    video_path = tmp_path / "blank.mp4"
+    _make_test_video(video_path, 5, textured=False)
+    challenges_payload, light_log = _build_payload()
+
+    with open(video_path, "rb") as f:
+        response = client.post(
+            f"/api/applicants/{applicant_id}/verify",
+            files={"video": ("test.mp4", f, "video/mp4")},
+            data={
+                "light_log": json.dumps(light_log, ensure_ascii=False),
+                "challenges": json.dumps(challenges_payload, ensure_ascii=False),
+            },
+            headers={"X-Session-Id": "nonexistent-token"},
+        )
+
+    assert response.status_code == 401
+
+
+@requires_db
+def test_verify_returns_409_when_session_expired(client, applicant_id, tmp_path):
+    """§4.8：15 分鐘倒數歸零後不能再跑 /verify（§5.5 契約明文的 409）。"""
+    token = secrets.token_urlsafe(config.SESSION_TOKEN_BYTES)
+    session = SessionLocal()
+    try:
+        applicant = session.get(Applicant, applicant_id)
+        applicant.session_id = token
+        applicant.session_deadline_at = datetime.now() - timedelta(seconds=1)
+        session.commit()
+    finally:
+        session.close()
+
+    video_path = tmp_path / "blank.mp4"
+    _make_test_video(video_path, 5, textured=False)
+    challenges_payload, light_log = _build_payload()
+
+    with open(video_path, "rb") as f:
+        response = client.post(
+            f"/api/applicants/{applicant_id}/verify",
+            files={"video": ("test.mp4", f, "video/mp4")},
+            data={
+                "light_log": json.dumps(light_log, ensure_ascii=False),
+                "challenges": json.dumps(challenges_payload, ensure_ascii=False),
+            },
+            headers={"X-Session-Id": token},
+        )
+
+    assert response.status_code == 409
+
+
+@requires_db
 def test_verify_full_pipeline_writes_record_when_quality_passes(
-    client, applicant_id, tmp_path, monkeypatch
+    client, applicant_id, session_headers, tmp_path, monkeypatch
 ):
     """繞過品質檢查（沒有真人臉本來就過不了，見模組頂部說明），驗證
     五層分析＋融合決策＋資料庫寫入這條真正的管線走得通、不會崩潰，
@@ -191,6 +265,7 @@ def test_verify_full_pipeline_writes_record_when_quality_passes(
                 "light_log": json.dumps(light_log, ensure_ascii=False),
                 "challenges": json.dumps(challenges_payload, ensure_ascii=False),
             },
+            headers=session_headers,
         )
 
     assert response.status_code == 200
@@ -236,6 +311,10 @@ def test_verify_returns_404_for_nonexistent_applicant(client, tmp_path):
                 "light_log": json.dumps(light_log, ensure_ascii=False),
                 "challenges": json.dumps(challenges_payload, ensure_ascii=False),
             },
+            # X-Session-Id 是必填 header（HTTP header 值只能是 ASCII，
+            # 值本身不重要）——applicant 不存在時，404 檢查在
+            # _require_session() 之前就先擋下了。
+            headers={"X-Session-Id": "irrelevant-value"},
         )
 
     assert response.status_code == 404

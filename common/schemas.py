@@ -290,3 +290,62 @@ class ApplicantCreateRequest(CamelModel):
 
 class ApplicantCreateResponse(CamelModel):
     applicant_id: int
+
+
+# --------------------------------------------------------------------------
+# API 請求/回應：簡訊驗證與 Session（§4.8、§5.5）
+#
+# 2026-08-19 補上實作。sessionId 是 sms/verify 成功後產生的不透明 token，
+# 之後 /verify、/account-setup、/reset 都要求呼叫端在 X-Session-Id
+# header 帶上同一個值（不塞進這幾個 request body，見 api/routes.py 的
+# session 驗證邏輯），用來證明請求真的是剛完成簡訊驗證的那個人送出的。
+# --------------------------------------------------------------------------
+
+
+class SmsSendRequest(CamelModel):
+    phone: str
+
+
+class SmsSendResponse(CamelModel):
+    sent: bool
+
+
+class SmsVerifyRequest(CamelModel):
+    code: str
+
+
+class SmsVerifyResponse(CamelModel):
+    success: bool
+    session_id: str
+    sms_verified_at: str
+    deadline_at: str
+
+
+class ResetResponse(CamelModel):
+    reset: bool
+
+
+# --------------------------------------------------------------------------
+# API 請求/回應：帳戶設定（§5.8，對應 PRD 步驟⑤）
+# --------------------------------------------------------------------------
+
+
+class NotificationPreference(CamelModel):
+    sms: bool
+    email: bool
+
+
+class AccountSetupRequest(CamelModel):
+    """transactionPassword 的「6 位數字」格式檢查、termsAccepted 的
+    true 檢查都在 api/routes.py 手動做，回傳明確的 400（見 §5.8），
+    不用 Pydantic 欄位約束觸發 FastAPI 預設的 422——契約寫的是 400。"""
+
+    account_type: Literal["type1", "type3"]
+    transaction_password: str
+    notification_preference: NotificationPreference
+    terms_accepted: bool
+
+
+class AccountSetupResponse(CamelModel):
+    success: bool
+    account_result: Literal["opened"]

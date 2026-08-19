@@ -39,6 +39,16 @@ class Applicant(Base):
     birth_date: Mapped[date]
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
+    # §4.8 簡訊驗證與全域倒數 Session（2026-08-19 新增，§5.7 沒有列出這三欄，
+    # 屬於「§2 允許新增欄位」的延伸，不是既有欄位的變動）。
+    # sms_attempts 統計連續錯誤次數（§5.5：連續錯誤 3 次需重新發送），
+    # sms/send 成功時歸零。
+    session_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    sms_code: Mapped[Optional[str]] = mapped_column(String(6), nullable=True)
+    sms_attempts: Mapped[int] = mapped_column(default=0)
+    sms_verified_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    session_deadline_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+
     verification_records: Mapped[list["VerificationRecordRow"]] = relationship(
         back_populates="applicant"
     )
