@@ -82,6 +82,12 @@ class VerificationRecordRow(Base):
     # -- 區塊三：對照組（動作挑戰）--
     baseline_challenges: Mapped[dict] = mapped_column(JSONB)
     baseline_verdict: Mapped[str] = mapped_column(String(10))
+    # confidenceScore 是 2026-08-19 改版新增的欄位（§2 允許新增），但
+    # 當時漏了同步補進 DB 欄位——五層算出來的信心分數只活在單次 /verify
+    # 回應裡，寫進 DB 前就遺失了，之後想從 admin/records 讀回來會拿不到
+    # 這個值。2026-08-19 稍晚（實作 admin/records 時）發現並補上四個
+    # track 對應的欄位，此後寫入的紀錄才會完整保留。
+    baseline_confidence_score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
 
     # -- 區塊四：Track 1（合成偵測）--
     synthetic_fake_probability: Mapped[Decimal] = mapped_column(Numeric(5, 4))
@@ -97,6 +103,7 @@ class VerificationRecordRow(Base):
     rppg_checks: Mapped[dict] = mapped_column(JSONB)
     rppg_waveform: Mapped[dict] = mapped_column(JSONB)
     rppg_spectrum: Mapped[dict] = mapped_column(JSONB)
+    rppg_confidence_score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
 
     # -- 區塊六：Track 3（照明響應）--
     photo_detected: Mapped[bool]
@@ -107,6 +114,7 @@ class VerificationRecordRow(Base):
     photo_checks: Mapped[dict] = mapped_column(JSONB)
     photo_light_curve: Mapped[dict] = mapped_column(JSONB)
     photo_reflect_curve: Mapped[dict] = mapped_column(JSONB)
+    photo_confidence_score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
 
     # -- 區塊七：Track 4（遮擋一致性，核心防禦層）--
     occ_detected: Mapped[bool]
@@ -118,6 +126,7 @@ class VerificationRecordRow(Base):
     occ_anomaly_frames: Mapped[dict] = mapped_column(JSONB)
     occ_checks: Mapped[dict] = mapped_column(JSONB)
     occ_stability_curve: Mapped[dict] = mapped_column(JSONB)
+    occ_confidence_score: Mapped[Decimal] = mapped_column(Numeric(5, 4))
 
     # -- 區塊八：決策融合 --
     risk_score: Mapped[int]
@@ -147,3 +156,8 @@ class AdminCredential(Base):
     username: Mapped[str] = mapped_column(String(50), unique=True)
     password_hash: Mapped[str] = mapped_column(String(60))
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    # 登入成功後的簡易 session token（§4.9：「成功時回傳簡易 session
+    # token」），§5.7 沒列出這兩欄，屬於允許新增的欄位。
+    token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    token_expires_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)

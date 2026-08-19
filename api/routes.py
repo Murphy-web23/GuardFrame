@@ -14,19 +14,24 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 import config
+from api.auth import verify_admin_login
 from api.database import get_db
-from api.models import Applicant, VerificationRecordRow
+from api.models import AdminCredential, Applicant, VerificationRecordRow
 from baseline_challenge.analyzer import analyze_baseline
 from common.face_utils import extract_frames
 from common.fusion import fuse_decision
 from common.schemas import (
     AccountSetupRequest,
     AccountSetupResponse,
+    AdminLoginRequest,
+    AdminLoginResponse,
+    AdminRecordsResponse,
     ApplicantCreateRequest,
     ApplicantCreateResponse,
     ChallengesPayload,
@@ -334,6 +339,7 @@ async def verify(
         quality_message=quality["message"],
         baseline_challenges=baseline_result["challenges"],
         baseline_verdict=baseline_result["verdict"],
+        baseline_confidence_score=baseline_result["confidenceScore"],
         synthetic_fake_probability=synthetic_result["fakeProbability"],
         synthetic_threshold=synthetic_result["threshold"],
         synthetic_verdict=synthetic_result["verdict"],
@@ -345,6 +351,7 @@ async def verify(
         rppg_checks=rppg_result["checks"],
         rppg_waveform=rppg_result["waveform"],
         rppg_spectrum=rppg_result["spectrum"],
+        rppg_confidence_score=rppg_result["confidenceScore"],
         photo_detected=photometric_result["detected"],
         photo_correlation=photometric_result["correlation"],
         photo_latency_ms=photometric_result["latencyMs"],
@@ -353,6 +360,7 @@ async def verify(
         photo_checks=photometric_result["checks"],
         photo_light_curve=photometric_result["lightCurve"],
         photo_reflect_curve=photometric_result["reflectCurve"],
+        photo_confidence_score=photometric_result["confidenceScore"],
         occ_detected=occlusion_result["detected"],
         occ_wave_cycles=occlusion_result["waveCyclesDetected"],
         occ_identity_stability=occlusion_result["identityStability"],
@@ -362,6 +370,7 @@ async def verify(
         occ_anomaly_frames=occlusion_result["anomalyFrames"],
         occ_checks=occlusion_result["checks"],
         occ_stability_curve=occlusion_result["stabilityCurve"],
+        occ_confidence_score=occlusion_result["confidenceScore"],
         risk_score=decision["riskScore"],
         verdict=decision["verdict"],
         verdict_label=decision["verdictLabel"],
@@ -443,3 +452,159 @@ def setup_account(
     db.commit()
 
     return AccountSetupResponse(success=True, account_result="opened")
+
+
+# --------------------------------------------------------------------------
+# §4.9／§5.5 後台認證與查詢
+# --------------------------------------------------------------------------
+
+_admin_bearer = HTTPBearer()
+
+
+def _require_admin(
+    credentials: HTTPAuthorizationCredentials = Depends(_admin_bearer),
+    db: Session = Depends(get_db),
+) -> AdminCredential:
+    """驗證 Authorization: Bearer <token>，跟 §4.8 申請人的 X-Session-Id
+    是不同機制——這裡認證的是行員帳號，不是申請人。"""
+    admin = db.query(AdminCredential).filter_by(token=credentials.credentials).first()
+    if (
+        admin is None
+        or admin.token_expires_at is None
+        or datetime.now() > admin.token_expires_at
+    ):
+        raise HTTPException(status_code=401, detail="登入逾時或憑證無效，請重新登入")
+    return admin
+
+
+def _row_to_record_dict(row: VerificationRecordRow) -> dict:
+    """把一筆 VerificationRecordRow（平面化 DB 欄位）還原成 §5.1 的巢狀
+    record 結構，供 admin/records 用。JSONB 欄位（checks/topSignals/
+    curve 等）寫入時就已經是 camelCase 形狀（直接來自各 analyzer 的
+    回傳值，見 verify()），這裡不用再轉換。"""
+    applicant = row.applicant
+    phases = row.phases
+    return {
+        "id": f"VF-{row.timestamp:%Y%m%d}-{row.id:04d}",
+        "timestamp": row.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+        "applicantName": applicant.name,
+        "applicantIdMasked": applicant.id_number_masked,
+        "sourceType": row.source_type,
+        "recording": {
+            "durationSec": float(row.duration_sec),
+            "fps": float(row.fps),
+            "totalFrames": row.total_frames,
+            "phases": phases,
+        },
+        "quality": {
+            "passed": row.quality_passed,
+            "blurScore": float(row.blur_score) if row.blur_score is not None else None,
+            "brightness": float(row.brightness) if row.brightness is not None else None,
+            "contrast": float(row.contrast) if row.contrast is not None else None,
+            "overexposedRatio": (
+                float(row.overexposed_ratio) if row.overexposed_ratio is not None else None
+            ),
+            "faceRatio": float(row.face_ratio) if row.face_ratio is not None else None,
+            "message": row.quality_message or "",
+        },
+        "baseline": {
+            "standard": "ISO/IEC 30107-3 動作挑戰",
+            "challenges": row.baseline_challenges,
+            "verdict": row.baseline_verdict,
+            "verdictLabel": "通過" if row.baseline_verdict == "pass" else "拒絕",
+            "confidenceScore": float(row.baseline_confidence_score),
+        },
+        "synthetic": {
+            "fakeProbability": float(row.synthetic_fake_probability),
+            "threshold": float(row.synthetic_threshold),
+            "verdict": row.synthetic_verdict,
+            "topSignals": row.synthetic_top_signals,
+        },
+        "rppg": {
+            "detected": row.rppg_detected,
+            "heartRate": float(row.rppg_heart_rate) if row.rppg_heart_rate is not None else None,
+            "snr": float(row.rppg_snr),
+            "roiConsistency": float(row.rppg_roi_consistency),
+            "checks": row.rppg_checks,
+            "waveform": row.rppg_waveform,
+            "spectrum": row.rppg_spectrum,
+            "confidenceScore": float(row.rppg_confidence_score),
+        },
+        "photometric": {
+            "detected": row.photo_detected,
+            "correlation": float(row.photo_correlation),
+            "latencyMs": float(row.photo_latency_ms) if row.photo_latency_ms is not None else None,
+            "geometryScore": float(row.photo_geometry_score),
+            "sequence": row.photo_sequence,
+            "checks": row.photo_checks,
+            "lightCurve": row.photo_light_curve,
+            "reflectCurve": row.photo_reflect_curve,
+            "confidenceScore": float(row.photo_confidence_score),
+        },
+        "occlusion": {
+            "detected": row.occ_detected,
+            "waveCyclesDetected": row.occ_wave_cycles,
+            "identityStability": float(row.occ_identity_stability),
+            "maxIdentityDrop": float(row.occ_max_identity_drop),
+            "occlusionSegments": row.occ_segments,
+            "layerScore": float(row.occ_layer_score),
+            "anomalyFrames": row.occ_anomaly_frames,
+            "checks": row.occ_checks,
+            "stabilityCurve": row.occ_stability_curve,
+            "confidenceScore": float(row.occ_confidence_score),
+        },
+        "decision": {
+            "riskScore": row.risk_score,
+            "verdict": row.verdict,
+            "verdictLabel": row.verdict_label,
+            "reasons": row.reasons,
+        },
+        "vlmSummary": (
+            {
+                "available": row.vlm_available,
+                "frameObservations": row.vlm_frame_observations or [],
+                "summary": row.vlm_summary or "",
+                "model": row.vlm_model or "",
+                "latencyMs": float(row.vlm_latency_ms) if row.vlm_latency_ms is not None else 0.0,
+            }
+            if row.vlm_available is not None
+            else None
+        ),
+        "accountResult": row.account_result,
+    }
+
+
+@router.post("/admin/login", response_model=AdminLoginResponse)
+def admin_login(payload: AdminLoginRequest, db: Session = Depends(get_db)) -> AdminLoginResponse:
+    """§4.9／§5.5：帳密以 bcrypt 比對，帳號需先用 scripts/init_admin.py
+    （§8.1）建立，這裡不提供任何自助建帳號的方式。"""
+    result = verify_admin_login(payload.username, payload.password, db)
+    return AdminLoginResponse(**result)
+
+
+@router.get("/admin/records", response_model=AdminRecordsResponse)
+def list_admin_records(
+    limit: int = Query(50, ge=1, le=200),
+    verdict: str | None = Query(None),
+    admin: AdminCredential = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> AdminRecordsResponse:
+    query = db.query(VerificationRecordRow)
+    if verdict is not None:
+        query = query.filter_by(verdict=verdict)
+    rows = query.order_by(VerificationRecordRow.id.desc()).limit(limit).all()
+    return AdminRecordsResponse(
+        records=[VerificationRecord.model_validate(_row_to_record_dict(row)) for row in rows]
+    )
+
+
+@router.get("/admin/records/{record_id}", response_model=VerificationRecord)
+def get_admin_record(
+    record_id: int,
+    admin: AdminCredential = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> VerificationRecord:
+    row = db.get(VerificationRecordRow, record_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="record not found")
+    return VerificationRecord.model_validate(_row_to_record_dict(row))

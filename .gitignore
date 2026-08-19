@@ -24,3 +24,7 @@ models/
 CONVENTIONS*.md
 PLAN*.md
 PHASE*_NOTES.md
+
+# 後台帳號初始化腳本，§8.1 明文規定不進 git（本身不含密碼，但屬於
+# 「僅本機執行一次」的一次性工具，不是給團隊共用的程式碼）
+scripts/init_admin.py

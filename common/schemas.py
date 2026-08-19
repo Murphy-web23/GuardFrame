@@ -349,3 +349,26 @@ class AccountSetupRequest(CamelModel):
 class AccountSetupResponse(CamelModel):
     success: bool
     account_result: Literal["opened"]
+
+
+# --------------------------------------------------------------------------
+# API 請求/回應：後台認證與查詢（§4.9、§5.5）
+#
+# 這是給銀行行員用的後台，跟上面申請人流程的 session 是不同機制——
+# 行員有事先建立好的帳號密碼（§8.1），登入後用 Authorization: Bearer
+# <token> header 存取查詢端點，不是 X-Session-Id。
+# --------------------------------------------------------------------------
+
+
+class AdminLoginRequest(CamelModel):
+    username: str
+    password: str
+
+
+class AdminLoginResponse(CamelModel):
+    success: bool
+    token: Optional[str] = None
+
+
+class AdminRecordsResponse(CamelModel):
+    records: list[VerificationRecord]
