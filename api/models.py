@@ -69,6 +69,11 @@ class VerificationRecordRow(Base):
     fps: Mapped[Decimal] = mapped_column(Numeric(5, 2))
     total_frames: Mapped[int]
     phases: Mapped[dict] = mapped_column(JSONB)
+    # 2026-08-19 新增：象徵性影片保存（見 PHASE1_NOTES §八），相對於
+    # BASE_DIR 的路徑字串，NULL 代表這筆紀錄沒有保存原始影片（目前只有
+    # 這個原因：分析中途失敗，見 api/routes.py verify() 的清理邏輯）。
+    # §5.7 未列出，屬於允許新增的欄位，不對外 API 曝露（純後端內部用）。
+    video_path: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
 
     # -- 區塊二：影像品質檢查 --
     quality_passed: Mapped[bool]

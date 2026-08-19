@@ -13,6 +13,11 @@ DATA_DIR = BASE_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
 RECORDINGS_DIR = DATA_DIR / "recordings"
+# 2026-08-19：/verify 象徵性保存驗證影片用（見 PHASE1_NOTES §八），
+# 跟上面 RECORDINGS_DIR（B 自己收集的自測/開發用影片）分開，避免混在
+# 一起搞不清楚哪些是測試素材、哪些是「系統實際留存的驗證證據」。
+# 屬於 data/ 底下，已經整個被 .gitignore 排除。
+VERIFICATION_VIDEO_DIR = DATA_DIR / "verification_videos"
 WEIGHTS_PATH = BASE_DIR / "track1_synthetic" / "weights" / "classifier.pth"
 MODELS_DIR = BASE_DIR / "models"  # 第三方模型檔，不進 git
 

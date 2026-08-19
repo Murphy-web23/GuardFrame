@@ -9,6 +9,7 @@ Session 機制（sms/send、sms/verify、account-setup、reset）——這四個
 
 import base64
 import secrets
+import shutil
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -299,15 +300,16 @@ async def verify(
     try:
         frames, fps = extract_frames(tmp_path)
     except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
-    finally:
         Path(tmp_path).unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc))
 
     quality = check_image_quality(frames)
     if not quality["passed"]:
-        # 不合格畫面不執行五層分析，直接退回。CONVENTIONS 沒有明文規定
+        # 不合格影片不值得象徵性保存（見下方成功路徑的說明），這裡連同
+        # 暫存檔一起丟掉。CONVENTIONS 沒有明文規定
         # 這裡的狀態碼，422（Unprocessable Entity）比照「請求格式正確、
         # 但語意上無法處理」的慣例用法，比硬塞一個假的 record 更誠實。
+        Path(tmp_path).unlink(missing_ok=True)
         return JSONResponse(status_code=422, content={"quality": quality})
 
     phases = challenges_payload.recording.phases
@@ -422,6 +424,19 @@ async def verify(
     db.add(row)
     db.commit()
     db.refresh(row)
+
+    # 象徵性保存驗證影片（見 PHASE1_NOTES §八）：只有真的寫進資料庫、
+    # 走完五層分析的紀錄才保留原始影片，不合格或半途失敗的不留（見上面
+    # 兩處 quality/extract_frames 失敗路徑的清理）。這不是合規等級的
+    # 保存架構（沒有加密、沒有備援、沒有正式的保存期限管理），只是先
+    # 證明「架構上支援保留原始影片」這個概念——真的要符合金管會規範，
+    # 需要另外設計儲存位置與存取控管，超出本次專題範圍。
+    video_dir = config.VERIFICATION_VIDEO_DIR / str(applicant_id)
+    video_dir.mkdir(parents=True, exist_ok=True)
+    stored_video_path = video_dir / f"{row.id}{suffix}"
+    shutil.move(tmp_path, stored_video_path)
+    row.video_path = str(stored_video_path.relative_to(config.BASE_DIR))
+    db.commit()
 
     record_dict = {
         "id": f"VF-{now:%Y%m%d}-{row.id:04d}",

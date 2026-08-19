@@ -10,6 +10,7 @@ Postgres。沒有可用連線時自動 skip。
 
 import json
 import secrets
+import shutil
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -89,6 +90,9 @@ def applicant_id():
         session.query(Applicant).filter_by(id=applicant.id).delete()
         session.commit()
         session.close()
+        # 象徵性保存的測試影片（見 PHASE1_NOTES §八），清掉避免測試
+        # 素材一直堆積在 data/verification_videos/。
+        shutil.rmtree(config.VERIFICATION_VIDEO_DIR / str(applicant.id), ignore_errors=True)
 
 
 @pytest.fixture
@@ -180,6 +184,9 @@ def test_verify_returns_422_when_quality_fails(client, applicant_id, session_hea
 
     assert response.status_code == 422
     assert response.json()["quality"]["passed"] is False
+    # 不合格影片不值得象徵性保存（見 PHASE1_NOTES §八），確認沒有留下
+    # 半調子的檔案在磁碟上。
+    assert not (config.VERIFICATION_VIDEO_DIR / str(applicant_id)).exists()
 
 
 @requires_db
@@ -293,6 +300,13 @@ def test_verify_full_pipeline_writes_record_when_quality_passes(
         # DB 讀回來是 Decimal（Numeric 欄位），跟 float 比較前要先轉型
         assert float(rows[0].synthetic_fake_probability) == pytest.approx(0.87)
         assert rows[0].verdict == body["decision"]["verdict"]
+
+        # 象徵性影片保存（PHASE1_NOTES §八）：走完整條管線的紀錄要真的
+        # 把影片留在磁碟上，不是只寫路徑字串騙自己。
+        assert rows[0].video_path is not None
+        stored_path = config.BASE_DIR / rows[0].video_path
+        assert stored_path.is_file()
+        assert stored_path.stat().st_size > 0
     finally:
         session.close()
 
