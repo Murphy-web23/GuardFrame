@@ -34,7 +34,7 @@ def test_constructs_via_snake_case_kwargs():
 def test_model_dump_by_alias_produces_camelcase():
     result = schemas.RppgResult(
         detected=False, heart_rate=None, snr=0.7, roi_consistency=0.21,
-        checks=[], waveform=[], spectrum=[],
+        checks=[], waveform=[], spectrum=[], confidence_score=0.5,
     )
     dumped = result.model_dump(by_alias=True)
     assert "heartRate" in dumped
@@ -45,7 +45,7 @@ def test_model_dump_by_alias_produces_camelcase():
 def test_model_dump_without_by_alias_stays_snake_case():
     result = schemas.RppgResult(
         detected=False, heart_rate=None, snr=0.7, roi_consistency=0.21,
-        checks=[], waveform=[], spectrum=[],
+        checks=[], waveform=[], spectrum=[], confidence_score=0.5,
     )
     dumped = result.model_dump()
     assert "heart_rate" in dumped
@@ -70,6 +70,7 @@ def test_rppg_result_parses_real_shaped_dict():
         ],
         "waveform": [0.1, 0.2],
         "spectrum": [0.0] * 64,
+        "confidenceScore": 0.05,
     }
     result = schemas.RppgResult.model_validate(raw)
     assert result.heart_rate == pytest.approx(68.5)
@@ -87,6 +88,7 @@ def test_photometric_result_parses_real_shaped_dict():
         "checks": [{"label": "x", "passed": False}] * 3,
         "lightCurve": [0.0] * 100,
         "reflectCurve": [0.0] * 100,
+        "confidenceScore": 0.9,
     }
     result = schemas.PhotometricResult.model_validate(raw)
     assert result.latency_ms is None
@@ -104,6 +106,7 @@ def test_occlusion_result_parses_segments_as_tuples():
         "anomalyFrames": [15, 62],
         "checks": [{"label": "x", "passed": True}] * 3,
         "stabilityCurve": [],
+        "confidenceScore": 0.2,
     }
     result = schemas.OcclusionResult.model_validate(raw)
     assert result.occlusion_segments == [(12, 34), (58, 79), (103, 121)]
@@ -197,21 +200,23 @@ def test_verification_record_full_assembly():
         ),
         baseline=schemas.BaselineResult(
             standard="ISO/IEC 30107-3 動作挑戰", challenges=[], verdict="pass", verdict_label="判定為真人",
+            confidence_score=0.0,
         ),
         synthetic=schemas.SyntheticResult(
             fake_probability=0.94, threshold=0.5, verdict="reject", top_signals=[],
         ),
         rppg=schemas.RppgResult(
             detected=False, heart_rate=None, snr=0.7, roi_consistency=0.21,
-            checks=[], waveform=[], spectrum=[],
+            checks=[], waveform=[], spectrum=[], confidence_score=0.85,
         ),
         photometric=schemas.PhotometricResult(
             detected=False, correlation=0.06, latency_ms=None, geometry_score=0.09,
-            sequence=[], checks=[], light_curve=[], reflect_curve=[],
+            sequence=[], checks=[], light_curve=[], reflect_curve=[], confidence_score=0.9,
         ),
         occlusion=schemas.OcclusionResult(
             detected=True, wave_cycles_detected=3, identity_stability=0.71, max_identity_drop=0.34,
             occlusion_segments=[], layer_score=0.28, anomaly_frames=[], checks=[], stability_curve=[],
+            confidence_score=0.3,
         ),
         decision=schemas.DecisionResult(
             risk_score=94, verdict="reject", verdict_label="拒絕",

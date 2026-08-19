@@ -17,6 +17,7 @@ from scipy.signal import correlate
 
 import config
 from common.landmarks import ModelNotFoundError, extract_landmarks
+from common.risk import combine_risks, threshold_risk
 from track3_photometric import geometry as geo
 from track3_photometric import sequence as seq
 
@@ -45,6 +46,7 @@ def _empty_result():
         "checks": [{"label": label, "passed": False} for label in CHECK_LABELS],
         "lightCurve": [],
         "reflectCurve": [],
+        "confidenceScore": 1.0,
     }
 
 
@@ -168,7 +170,11 @@ def analyze_photometric(frames: list, fps: float, light_log: dict) -> dict:
                 {"label": str, "passed": bool}
             ],
             "lightCurve": list[float],     # 螢幕光強度，長度 100，標準化 0-1
-            "reflectCurve": list[float]    # 臉部反射強度，長度 100，標準化 0-1
+            "reflectCurve": list[float],   # 臉部反射強度，長度 100，標準化 0-1
+            "confidenceScore": float       # 0.0-1.0，連續風險信心分數，數值
+                                            # 越高代表越可疑，供 common/
+                                            # fusion.py 加權融合用（§2 允許
+                                            # 新增欄位，不在原始契約清單）
         }
 
     備註:
@@ -224,6 +230,23 @@ def analyze_photometric(frames: list, fps: float, light_log: dict) -> dict:
         {"label": CHECK_LABELS[2], "passed": bool(geometry_ok)},
     ]
 
+    # 連續信心分數：三項判定各自平滑成風險分數後取最大值（理由見
+    # common/risk.py 與 track2_rppg/analyzer.py 的同類註解）。
+    confidence_score = combine_risks(
+        threshold_risk(
+            correlation, config.PHOTO_CORRELATION_MIN, config.PHOTO_CORRELATION_RISK_SCALE,
+            higher_is_better=True,
+        ),
+        threshold_risk(
+            abs(latency_ms), config.PHOTO_LATENCY_MAX_MS, config.PHOTO_LATENCY_RISK_SCALE,
+            higher_is_better=False,
+        ),
+        threshold_risk(
+            geometry_score, config.PHOTO_GEOMETRY_MIN, config.PHOTO_GEOMETRY_RISK_SCALE,
+            higher_is_better=True,
+        ),
+    )
+
     return {
         # 三項判定全部要過，detected 才是 True——理由跟 Track 2 一樣：
         # 不能讓最弱的一項單獨決定結果（見 track2_rppg/analyzer.py 的說明）。
@@ -239,4 +262,5 @@ def analyze_photometric(frames: list, fps: float, light_log: dict) -> dict:
         "reflectCurve": _resample(
             _normalize_series(reflect_filled), config.PHOTO_CURVE_POINTS
         ),
+        "confidenceScore": confidence_score,
     }

@@ -361,6 +361,11 @@ def test_analyze_occlusion_detects_consistent_real_wave(monkeypatch):
     assert result["checks"][2]["passed"] is True
     assert result["detected"] is True
     assert len(result["stabilityCurve"]) == len(frames) - 1
+    # waveCyclesDetected 剛好等於門檻值 2（不是明顯超過），這項的風險
+    # 分數會落在 sigmoid 的中心點 0.5（「剛好卡在門檻上」本來就該是
+    # 不確定，不是安全）；取三項最大值後，confidenceScore 也會被這項
+    # 頂到 0.5，不會更低——這是連續信心分數設計上的正確行為，不是 bug。
+    assert result["confidenceScore"] == pytest.approx(0.5)
 
 
 def test_analyze_occlusion_rejects_identity_swap_during_occlusion(monkeypatch):
@@ -373,6 +378,7 @@ def test_analyze_occlusion_rejects_identity_swap_during_occlusion(monkeypatch):
 
     assert result["checks"][1]["passed"] is False
     assert result["detected"] is False
+    assert result["confidenceScore"] > 0.5, "身分互換，信心分數該偏高風險"
 
 
 def test_analyze_occlusion_rejects_face_leaking_through_hand(monkeypatch):
@@ -387,6 +393,7 @@ def test_analyze_occlusion_rejects_face_leaking_through_hand(monkeypatch):
 
     assert result["checks"][2]["passed"] is False
     assert result["detected"] is False
+    assert result["confidenceScore"] > 0.5, "臉透出來，信心分數該偏高風險"
 
 
 def test_analyze_occlusion_rejects_no_waving(monkeypatch):
@@ -403,6 +410,7 @@ def test_analyze_occlusion_rejects_no_waving(monkeypatch):
     assert result["waveCyclesDetected"] == 0
     assert result["checks"][0]["passed"] is False
     assert result["detected"] is False
+    assert result["confidenceScore"] > 0.5, "沒有揮手循環，信心分數該偏高風險"
 
 
 def test_analyze_occlusion_empty_frames_returns_empty_result():

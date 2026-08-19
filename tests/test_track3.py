@@ -409,6 +409,7 @@ def test_analyze_photometric_detects_synced_dispersed_reflection(monkeypatch):
     assert len(result["lightCurve"]) == config.PHOTO_CURVE_POINTS
     assert len(result["reflectCurve"]) == config.PHOTO_CURVE_POINTS
     assert len(result["sequence"]) == len(light_log["segments"])
+    assert result["confidenceScore"] < 0.5, "三項都清楚過關，信心分數該偏低風險"
 
 
 def test_analyze_photometric_rejects_unrelated_reflection(monkeypatch):
@@ -432,3 +433,4 @@ def test_analyze_photometric_rejects_unrelated_reflection(monkeypatch):
 
     assert result["checks"][0]["passed"] is False
     assert result["detected"] is False
+    assert result["confidenceScore"] > 0.5, "相關係數沒過，信心分數該偏高風險"

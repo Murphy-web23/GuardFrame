@@ -106,6 +106,9 @@ class BaselineResult(CamelModel):
     challenges: list[BaselineChallengeItem]
     verdict: Literal["pass", "reject"]
     verdict_label: str
+    # 2026-08-19 新增：連續風險信心分數，0.0-1.0，數值越高代表越可疑，
+    # 供 common/fusion.py 加權融合用（§2 允許新增欄位）。
+    confidence_score: float
 
 
 # --------------------------------------------------------------------------
@@ -138,6 +141,7 @@ class RppgResult(CamelModel):
     checks: list[CheckItem]
     waveform: list[float]
     spectrum: list[float]
+    confidence_score: float
 
 
 # --------------------------------------------------------------------------
@@ -154,6 +158,7 @@ class PhotometricResult(CamelModel):
     checks: list[CheckItem]
     light_curve: list[float]
     reflect_curve: list[float]
+    confidence_score: float
 
 
 # --------------------------------------------------------------------------
@@ -171,6 +176,7 @@ class OcclusionResult(CamelModel):
     anomaly_frames: list[int]
     checks: list[CheckItem]
     stability_curve: list[float]
+    confidence_score: float
 
 
 # --------------------------------------------------------------------------

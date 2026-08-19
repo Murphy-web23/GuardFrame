@@ -15,6 +15,7 @@ import numpy as np
 
 import config
 from common.landmarks import ModelNotFoundError, extract_landmarks
+from common.risk import combine_risks, threshold_risk
 from track2_rppg import signal_utils as su
 
 # --------------------------------------------------------------------------
@@ -73,6 +74,9 @@ def _empty_result(snr=0.0, roi_consistency=0.0):
         "checks": [{"label": label, "passed": False} for label in CHECK_LABELS],
         "waveform": [],
         "spectrum": [],
+        # 沒有任何有效訊號時，沒有證據支持「這是真人」，信心分數保守給
+        # 最高風險（1.0），不能因為缺資料就預設安全（見 common/risk.py）。
+        "confidenceScore": 1.0,
     }
 
 
@@ -150,7 +154,11 @@ def analyze_rppg(frames: list, fps: float) -> dict:
                 {"label": str, "passed": bool}
             ],
             "waveform": list[float],       # 濾波後訊號
-            "spectrum": list[float]        # 功率頻譜，長度 64，對應 0-4 Hz
+            "spectrum": list[float],       # 功率頻譜，長度 64，對應 0-4 Hz
+            "confidenceScore": float       # 0.0-1.0，連續風險信心分數，
+                                            # 數值越高代表越可疑，供 common/
+                                            # fusion.py 加權融合用（§2 允許
+                                            # 新增欄位，不在原始契約清單）
         }
 
     備註:
@@ -222,6 +230,21 @@ def analyze_rppg(frames: list, fps: float) -> dict:
         {"label": CHECK_LABELS[2], "passed": bool(consistency_ok)},
     ]
 
+    # 連續信心分數：把 b、c 兩項判定用 sigmoid 平滑成 0-1 的風險分數再取
+    # 最大值（不是平均，理由見 common/risk.py）。a（主頻範圍）不納入——
+    # estimate_heart_rate() 本來就只在頻帶內找峰值，這項複查幾乎恆為真，
+    # 不是有鑑別力的連續訊號，見上面的判定註解。
+    snr_risk = threshold_risk(
+        best["snr"], config.RPPG_SNR_MIN, config.RPPG_SNR_RISK_SCALE, higher_is_better=True
+    )
+    consistency_risk = threshold_risk(
+        consistency,
+        config.RPPG_ROI_CONSISTENCY_MIN,
+        config.RPPG_CONSISTENCY_RISK_SCALE,
+        higher_is_better=True,
+    )
+    confidence_score = combine_risks(snr_risk, consistency_risk)
+
     return {
         # 三項判定全部要過，detected 才是 True。
         # SNR 的真人/攻擊分離度只有 1.6-2 dB（見 PHASE1_NOTES §5.4），跟
@@ -242,6 +265,7 @@ def analyze_rppg(frames: list, fps: float) -> dict:
             config.RPPG_SPECTRUM_POINTS,
             config.RPPG_SPECTRUM_MAX_HZ,
         ),
+        "confidenceScore": confidence_score,
     }
 
 

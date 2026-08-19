@@ -27,6 +27,7 @@ CONTRACT_KEYS = {
     "checks",
     "waveform",
     "spectrum",
+    "confidenceScore",
 }
 
 
@@ -49,6 +50,9 @@ def assert_matches_contract(result):
 
     assert isinstance(result["waveform"], list)
     assert isinstance(result["spectrum"], list)
+
+    assert isinstance(result["confidenceScore"], float)
+    assert 0.0 <= result["confidenceScore"] <= 1.0
 
 
 # --------------------------------------------------------------------------
@@ -158,6 +162,7 @@ def test_detected_false_when_snr_passes_but_consistency_fails(monkeypatch):
     assert result["checks"][1]["passed"] is True, "b. SNR 這項單獨看是過的"
     assert result["checks"][2]["passed"] is False, "c. 一致性沒過"
     assert result["detected"] is False, "即使 a、b 都過，c 沒過就不能是 detected=True"
+    assert result["confidenceScore"] > 0.5, "一致性差很多，連續信心分數也該偏高風險"
 
 
 def test_detected_true_when_all_three_checks_pass(monkeypatch):
@@ -172,6 +177,24 @@ def test_detected_true_when_all_three_checks_pass(monkeypatch):
     assert result["roiConsistency"] >= config.RPPG_ROI_CONSISTENCY_MIN
     assert all(c["passed"] for c in result["checks"])
     assert result["detected"] is True
+    assert result["confidenceScore"] < 0.5, "三項都清楚過關，連續信心分數也該偏低風險"
+
+
+def test_confidence_score_increases_as_signal_quality_degrades(monkeypatch):
+    """SNR／一致性越差，confidenceScore（風險）應該越高——單調關係，
+    不要求精確數字（scale 都還沒校準過），只驗證方向對。"""
+    good_frames = _patch_roi_pipeline(monkeypatch, [(70.0, 6.0), (71.0, 6.0), (69.5, 6.0)])
+    good = analyzer.analyze_rppg(good_frames, 30.0)
+
+    borderline_frames = _patch_roi_pipeline(
+        monkeypatch, [(70.0, 3.0), (71.0, 3.0), (69.5, 3.0)]
+    )
+    borderline = analyzer.analyze_rppg(borderline_frames, 30.0)
+
+    bad_frames = _patch_roi_pipeline(monkeypatch, [(70.0, -3.0), (45.0, -2.0), (100.0, -3.5)])
+    bad = analyzer.analyze_rppg(bad_frames, 30.0)
+
+    assert good["confidenceScore"] < borderline["confidenceScore"] < bad["confidenceScore"]
 
 
 # --------------------------------------------------------------------------

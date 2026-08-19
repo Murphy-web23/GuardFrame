@@ -19,6 +19,7 @@
 import numpy as np
 
 import config
+from common.risk import combine_risks, threshold_risk
 from track4_occlusion import hand_tracking as ht
 from track4_occlusion import identity as idt
 
@@ -46,6 +47,7 @@ def _empty_result():
         "anomalyFrames": [],
         "checks": [{"label": label, "passed": False} for label in CHECK_LABELS],
         "stabilityCurve": [],
+        "confidenceScore": 1.0,
     }
 
 
@@ -93,7 +95,12 @@ def analyze_occlusion(frames: list, fps: float) -> dict:
                 {"label": str, "passed": bool},
                 {"label": str, "passed": bool}
             ],
-            "stabilityCurve": list[float]   # 長度 = len(frames) - 1
+            "stabilityCurve": list[float],  # 長度 = len(frames) - 1
+            "confidenceScore": float        # 0.0-1.0，連續風險信心分數，
+                                             # 數值越高代表越可疑，供
+                                             # common/fusion.py 加權融合用
+                                             # （§2 允許新增欄位，不在原始
+                                             # 契約清單）
         }
 
     備註:
@@ -151,6 +158,30 @@ def analyze_occlusion(frames: list, fps: float) -> dict:
         {"label": CHECK_LABELS[2], "passed": bool(layer_ok)},
     ]
 
+    # 連續信心分數：三項判定各自平滑成風險分數後取最大值（理由見
+    # common/risk.py）。判定 b 本身是兩個門檻的 AND（穩定度、最大突降），
+    # 所以先各自算風險再取最大值，跟其餘三項判定之間的組合方式一致。
+    identity_risk = combine_risks(
+        threshold_risk(
+            identity_stability, config.OCC_IDENTITY_STABILITY_MIN,
+            config.OCC_STABILITY_RISK_SCALE, higher_is_better=True,
+        ),
+        threshold_risk(
+            max_drop, config.OCC_MAX_DROP_THRESHOLD, config.OCC_DROP_RISK_SCALE,
+            higher_is_better=False,
+        ),
+    )
+    confidence_score = combine_risks(
+        threshold_risk(
+            len(segments), 2, config.OCC_CYCLES_RISK_SCALE, higher_is_better=True
+        ),
+        identity_risk,
+        threshold_risk(
+            layer_score, config.OCC_LAYER_SCORE_MIN, config.OCC_LAYER_RISK_SCALE,
+            higher_is_better=True,
+        ),
+    )
+
     return {
         # 三項判定全部要過，detected 才是 True——理由同 Track 2/3：
         # 不能讓最弱的一項單獨決定結果。
@@ -163,4 +194,5 @@ def analyze_occlusion(frames: list, fps: float) -> dict:
         "anomalyFrames": anomaly_frames,
         "checks": checks,
         "stabilityCurve": stability_curve,
+        "confidenceScore": confidence_score,
     }

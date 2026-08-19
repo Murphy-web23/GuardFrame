@@ -8,25 +8,38 @@ FR-30~32 與 PLAN.md 的三段式決策設計實作。
 photometric/occlusion），輸出風險分數（0-100）、三段式決策、判定理由，
 對應 §5.1 的 record["decision"]。
 
-每層的風險貢獻怎麼算：
-    - Track 1（合成偵測）：直接用 fakeProbability * 100——這是五層裡
-      唯一本身就是連續機率值的層，不需要另外二值化。
-    - 其餘四層（對照組、Track 2/3/4）：各自的三項判定已經在自己的
-      analyzer 裡合起來變成一個 detected/verdict 布林值，這裡直接拿來
-      當「過/沒過」，沒過記 100 分風險、過了記 0 分。不嘗試從內部的
-      snr/roiConsistency/correlation/geometryScore/layerScore 等次要
-      指標另外組一個連續分數——那些數字已經被各自的三項判定消化過，
-      再組一次等於用一組沒有規則書依據的新公式覆蓋掉三項判定的結論。
+每層的風險貢獻怎麼算（2026-08-19 改版：統一信心分數）：
+    五層現在都輸出一個 0.0-1.0 的連續信心分數，數值越高代表越可疑，
+    權重直接乘上這個分數，不再二值化：
+        - Track 1（合成偵測）：`fakeProbability`——分類器的原始輸出，
+          §4.1 契約本來就有的欄位
+        - 對照組、Track 2/3/4：`confidenceScore`——這次新增的欄位
+          （§2 允許新增，不能改名或刪除既有欄位），由各自的 analyzer
+          內部用 `common/risk.py` 的 sigmoid 把「數值 vs 門檻」的判定
+          平滑算出來，同一個 track 裡多項判定取最大值（不是平均），
+          理由見 `common/risk.py`
+
+    **改版前**（二值化）：對照組/Track 2-4 只有「過/沒過」，沒過記 100
+    分風險、過了記 0 分，剛好卡在門檻附近沒過、跟差很遠沒過，風險貢獻
+    完全一樣。**改版後**：風險貢獻反映「這一層的證據有多強」，不只是
+    「有沒有超過一條線」——例如 Track 4 的身分穩定度剛好卡在 0.89（門檻
+    0.90）跟直接掉到 0.3，現在會算出明顯不同的風險貢獻，而不是都算
+    「沒過 = 100 分風險」。
+
+    **信心分數不是校準過的統計機率**，sigmoid 的平滑寬度（config 裡的
+    `*_RISK_SCALE`）目前都是合理猜測，只有 Track 2 的 SNR 那個有真實
+    資料依據（PHASE1_NOTES §5.4 記錄的真人/攻擊分離度），其餘待真實
+    資料校準，跟專案裡其他還沒校準的門檻是同一類狀況。
 
 **權重與決策區間目前是 CONVENTIONS §8 的初始值，尚未用真實資料校準**
 （§8 註解本身也寫明「實測後於階段4依 ROC 校準微調」）。用現在的權重
 反推 PLAN.md「五種攻擊情境的攔截分佈」表，「即時臉部重繪」那一列
 （對照組✓／Track1✗／Track2部分✗／Track3✓／Track4✗）算出來確實落在
-拒絕區間，但「真人光線不足」那一列（只有 Track2 部分✗）算出來只有
-15 分，落在通過區間，不是表格寫的人工複核——這不是這裡的公式錯了，
-是「部分✗」這種非全有全無的失效模式，用二值化風險本來就沒辦法完美
-還原，也是階段4要拿真實資料校準權重與門檻的原因，不是急著在這裡
-用假數字硬湊出表格數字。
+拒絕區間，這件事在改版前後都成立。「真人光線不足」那一列（只有
+Track2 部分✗）在改版前二值化只算 15 分（落在通過區間，不是表格寫的
+人工複核）；改版後因為 Track 2 的信心分數會依實際 SNR/一致性偏離門檻
+的程度連續變化，這個落差理論上會縮小，但**縮小多少沒有實測過**，兩種
+版本的門檻校準都要等真實資料，不是急著在這裡用假數字硬湊出表格數字。
 """
 
 import config
@@ -85,11 +98,15 @@ def _layer_passed(name, result):
 
 
 def _layer_risk(name, result):
-    """單層的風險貢獻，0.0-100.0。"""
-    if name == "synthetic":
-        probability = float(result.get("fakeProbability", 0.0))
-        return max(0.0, min(1.0, probability)) * 100.0
-    return 0.0 if _layer_passed(name, result) else 100.0
+    """單層的風險貢獻，0.0-100.0。
+
+    Track 1 用 `fakeProbability`（§4.1 契約本來就有的欄位），其餘四層
+    用 `confidenceScore`（這次新增的欄位，見模組頂部說明）。兩者意義
+    一致：0.0-1.0，數值越高代表越可疑，直接乘 100 當風險貢獻。
+    """
+    key = "fakeProbability" if name == "synthetic" else "confidenceScore"
+    score = float(result.get(key, 1.0))
+    return max(0.0, min(1.0, score)) * 100.0
 
 
 def compute_risk_score(baseline, synthetic, rppg, photometric, occlusion):
