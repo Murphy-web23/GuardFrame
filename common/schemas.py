@@ -293,6 +293,27 @@ class ApplicantCreateResponse(CamelModel):
 
 
 # --------------------------------------------------------------------------
+# API 請求/回應：POST /api/id-card/rectify（§4.7、§5.5）
+#
+# §5.5 的欄位列表只寫了 { success, corners, confidence, message }，但
+# 後面括號明確提到「success 為 False 時不含 rectified 影像」——代表
+# success 為 True 時應該要有 rectified 欄位，只是文件列表本身漏寫了。
+# rectify_id_card() 回傳的 rectified 是 np.ndarray，HTTP JSON 回應無法
+# 直接放 ndarray，這裡選擇編碼成 base64 data URI 字串（JPEG），整個
+# response 維持單一 JSON 物件，不用另外開一支下載端點，這是最貼近
+# §5.5 既有風格（單一 JSON 物件裝所有東西）的做法。
+# --------------------------------------------------------------------------
+
+
+class IdCardRectifyResponse(CamelModel):
+    success: bool
+    rectified: Optional[str] = None  # "data:image/jpeg;base64,..."，失敗時為 None
+    corners: Optional[list[list[float]]] = None
+    confidence: float
+    message: str
+
+
+# --------------------------------------------------------------------------
 # API 請求/回應：簡訊驗證與 Session（§4.8、§5.5）
 #
 # 2026-08-19 補上實作。sessionId 是 sms/verify 成功後產生的不透明 token，

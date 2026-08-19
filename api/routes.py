@@ -7,6 +7,7 @@ Session 機制（sms/send、sms/verify、account-setup、reset）——這四個
 機制（§4.9，帳號密碼＋bcrypt），跟這裡的申請人 session 無關，還沒做。
 """
 
+import base64
 import secrets
 import tempfile
 from datetime import datetime, timedelta
@@ -35,6 +36,7 @@ from common.schemas import (
     ApplicantCreateRequest,
     ApplicantCreateResponse,
     ChallengesPayload,
+    IdCardRectifyResponse,
     LightLog,
     ResetResponse,
     SmsSendRequest,
@@ -43,6 +45,7 @@ from common.schemas import (
     SmsVerifyResponse,
     VerificationRecord,
 )
+from image_utils.id_card import rectify_id_card
 from image_utils.quality import check_image_quality
 from track1_synthetic.detector import detect_synthetic
 from track2_rppg.analyzer import analyze_rppg
@@ -216,6 +219,40 @@ def _sample_for_synthetic(frames, count):
         return []
     indices = np.linspace(0, len(frames) - 1, count).astype(int).tolist()
     return [cv2.resize(frames[i], (config.FACE_SIZE, config.FACE_SIZE)) for i in indices]
+
+
+@router.post("/id-card/rectify", response_model=IdCardRectifyResponse)
+async def rectify_id_card_endpoint(image: UploadFile = File(...)) -> IdCardRectifyResponse:
+    """§4.7／§5.5：證件四角偵測與透視矯正。無 applicantId，是無狀態的
+    影像處理工具，不需要 session（跟 §4.8 的申請人流程無關）。
+
+    rectify_id_card() 回傳的 rectified 是 np.ndarray，這裡編碼成 base64
+    JPEG data URI 塞進 JSON 回應（見 common/schemas.py 對這個決定的
+    說明），失敗時維持 None，不回傳任何影像資料（§4.7 明文禁止）。
+    """
+    data = await image.read()
+    decoded = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if decoded is None:
+        return IdCardRectifyResponse(
+            success=False, rectified=None, corners=None, confidence=0.0,
+            message="無法解析上傳的影像檔案，請確認檔案格式後重新上傳",
+        )
+
+    result = rectify_id_card(decoded)
+
+    rectified_uri = None
+    if result["success"]:
+        ok, buf = cv2.imencode(".jpg", result["rectified"])
+        if ok:
+            rectified_uri = "data:image/jpeg;base64," + base64.b64encode(buf).decode("ascii")
+
+    return IdCardRectifyResponse(
+        success=result["success"],
+        rectified=rectified_uri,
+        corners=result["corners"],
+        confidence=result["confidence"],
+        message=result["message"],
+    )
 
 
 @router.post("/applicants/{applicant_id}/verify", response_model=VerificationRecord)

@@ -45,7 +45,7 @@ pytest tests/ -q
 | `common/risk.py` | 完成。sigmoid 平滑「數值 vs 門檻」判定的共用工具，供各 track 算 `confidenceScore` |
 | `common/schemas.py` | 完成。Pydantic 契約模型（snake_case 欄位＋camelCase 別名） |
 | `common/face_utils.py` | 完成 `extract_frames()`；`extract_face()`/CLIP 對齊留給 A |
-| `api/` | 完成：`POST /api/applicants`、`/verify`、`sms/send`、`sms/verify`、`account-setup`、`reset`、`admin/login`、`admin/records`、`admin/records/{id}`（含真的接 PostgreSQL）。申請人端用 `X-Session-Id` header，後台端用 `Authorization: Bearer <token>`，兩套機制不要搞混，細節見 `PHASE1_NOTES.md` §七第 7、8 點。CORS 已開放（開發階段 `allow_origins=["*"]`，正式環境要改成前端實際網域）。`id-card/rectify` 與 `frontend/` 尚未開始 |
+| `api/` | 全部 9 支契約端點完成：`POST /api/applicants`、`/verify`、`id-card/rectify`、`sms/send`、`sms/verify`、`account-setup`、`reset`、`admin/login`、`admin/records`、`admin/records/{id}`（含真的接 PostgreSQL）。申請人端用 `X-Session-Id` header，後台端用 `Authorization: Bearer <token>`，兩套機制不要搞混，細節見 `PHASE1_NOTES.md` §七。CORS 已開放（開發階段 `allow_origins=["*"]`，正式環境要改成前端實際網域）。`frontend/` 尚未開始。**23 秒驗證影片目前完全沒有保存機制**（只存分析結果，不存原始影片），是否需要保留待跟夥伴討論，見 `PHASE1_NOTES.md` §八 |
 | `track1_synthetic/`、`vlm_summary/` | A 負責，目前放了 B 的佔位版本讓系統能先跑通 |
 
 ### 2026-08-19：五層改用連續信心分數
