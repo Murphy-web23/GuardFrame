@@ -15,13 +15,15 @@ import {
   CheckCircle2,
   Edit3
 } from 'lucide-react';
-import { 
-  validateFullName, 
-  validateTaiwanId, 
-  validateBirthday, 
+import {
+  validateFullName,
+  validateTaiwanId,
+  validateBirthday,
   validateTaiwanPhone,
   validateAddress
 } from '../../utils/validators';
+import { createApplicantAndSession } from '../../api/onboarding';
+import { ApiError } from '../../api/client';
 
 interface BasicInfoScreenProps {
   formData: FormData;
@@ -42,6 +44,8 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
   const [address, setAddress] = useState<string>(formData.address || defaultMockOcrData.address);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>('');
 
   const handleSelectDemoUser = (user: DemoUser) => {
     setFullName(user.fullName);
@@ -53,7 +57,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
     setErrors({});
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     const newErrors: Record<string, string> = {};
 
     if (!fullName.trim() || !validateFullName(fullName)) {
@@ -77,16 +81,42 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
       return;
     }
 
-    updateFormData({
-      fullName,
-      idNumber,
-      birthday,
-      phone,
-      email,
-      address,
-    });
+    setSubmitError('');
+    setIsSubmitting(true);
+    try {
+      // 這裡才是真正建立申請人＋完成簡訊驗證的時間點（見 api/onboarding.ts
+      // 開頭的說明：畫面上的「驗證手機號碼」步驟比這裡早，但那時候還沒有
+      // 全部欄位可以建立真的申請人）。
+      const { applicantId, sessionId } = await createApplicantAndSession({
+        name: fullName,
+        idNumber,
+        birthDate: birthday,
+        phone,
+        email: email || 'user@example.com',
+        address,
+      });
 
-    onNext();
+      updateFormData({
+        fullName,
+        idNumber,
+        birthday,
+        phone,
+        email,
+        address,
+        applicantId,
+        sessionId,
+      });
+
+      onNext();
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError
+          ? `送出失敗：${err.message}`
+          : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -231,13 +261,17 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
 
       {/* Primary CTA: 確認資料 */}
       <div className="pt-4">
+        {submitError && (
+          <p className="text-[11px] text-rose-500 font-medium pb-2 text-center">{submitError}</p>
+        )}
         <button
           id="confirm-basic-info-btn"
           type="button"
           onClick={handleConfirm}
-          className="w-full py-3.5 px-6 rounded-2xl bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white font-bold text-sm shadow-lg shadow-sky-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+          disabled={isSubmitting}
+          className="w-full py-3.5 px-6 rounded-2xl bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white font-bold text-sm shadow-lg shadow-sky-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          <span>確認資料</span>
+          <span>{isSubmitting ? '送出中…' : '確認資料'}</span>
           <ArrowRight className="h-4 w-4 stroke-[2.5]" />
         </button>
       </div>

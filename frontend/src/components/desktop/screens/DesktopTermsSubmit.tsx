@@ -19,6 +19,7 @@ import {
   Globe,
   Shield
 } from 'lucide-react';
+import { setupAccount, ApiError } from '../../../api/client';
 
 interface DesktopTermsSubmitProps {
   formData: FormData;
@@ -36,12 +37,18 @@ export const DesktopTermsSubmit: React.FC<DesktopTermsSubmitProps> = ({
   const [agreePrivacy, setAgreePrivacy] = useState<boolean>(formData.agreePrivacy ?? false);
   const [agreeElectronic, setAgreeElectronic] = useState<boolean>(formData.agreeElectronic ?? false);
 
+  // 2026-08-20 新增：見 TermsSubmitScreen.tsx（mobile 版）同一段說明——
+  // 後端 account-setup 要求 6 位數交易密碼，前端原本沒有畫面收集這個值。
+  const [accountPin, setAccountPin] = useState<string>(formData.accountPin || '');
+  const [pinError, setPinError] = useState<string>('');
+
   // Modal State for Terms viewer
   const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'electronic' | null>(null);
-  
+
   // Submission Loading State
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showValidationWarning, setShowValidationWarning] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>('');
 
   const isAllTermsAgreed = agreeTerms && agreePrivacy && agreeElectronic;
 
@@ -53,25 +60,53 @@ export const DesktopTermsSubmit: React.FC<DesktopTermsSubmitProps> = ({
     if (nextVal) setShowValidationWarning(false);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!isAllTermsAgreed) {
       setShowValidationWarning(true);
       return;
     }
+    if (!/^\d{6}$/.test(accountPin)) {
+      setPinError('請輸入 6 位數字交易密碼');
+      return;
+    }
+    if (!formData.applicantId || !formData.sessionId) {
+      setSubmitError('找不到申請資料，請回到「確認個人資料」重新送出一次');
+      return;
+    }
 
     setShowValidationWarning(false);
+    setPinError('');
+    setSubmitError('');
     setIsSubmitting(true);
 
-    updateFormData({
-      agreeTerms,
-      agreePrivacy,
-      agreeElectronic,
-    });
+    try {
+      await setupAccount(formData.applicantId, formData.sessionId, {
+        accountType: formData.cardStyle === 'style_b' ? 'type3' : 'type1',
+        transactionPassword: accountPin,
+        notificationPreference: {
+          sms: formData.notificationMethod === 'sms' || formData.notificationMethod === 'both',
+          email: formData.notificationMethod === 'email' || formData.notificationMethod === 'both',
+        },
+        termsAccepted: true,
+      });
 
-    setTimeout(() => {
-      setIsSubmitting(false);
+      updateFormData({
+        agreeTerms,
+        agreePrivacy,
+        agreeElectronic,
+        accountPin,
+      });
+
       onNext();
-    }, 1200);
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError
+          ? `送出失敗：${err.message}`
+          : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const cardStyleName = formData.cardStyle === 'style_b' ? '極光冰川白 (限定版)' : '極簡深海藍 (經典版)';
@@ -151,6 +186,28 @@ export const DesktopTermsSubmit: React.FC<DesktopTermsSubmitProps> = ({
 
           {/* Right Column: Legal Terms Checklist & Submit (7 cols) */}
           <div className="lg:col-span-7 space-y-4">
+            {/* Transaction Password (6-digit PIN) */}
+            <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+              <label htmlFor="desktop-account-pin" className="text-sm font-bold text-slate-800 flex items-center gap-2">
+                <Lock className="h-4 w-4 text-sky-600" />
+                <span>設定交易密碼（6 位數字）</span>
+              </label>
+              <input
+                id="desktop-account-pin"
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={accountPin}
+                onChange={(e) => {
+                  setAccountPin(e.target.value.replace(/\D/g, '').slice(0, 6));
+                  setPinError('');
+                }}
+                placeholder="請輸入 6 位數字"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-semibold tracking-[0.3em] text-slate-900 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+              />
+              {pinError && <p className="text-xs text-rose-500 font-medium">{pinError}</p>}
+            </div>
+
             <div className="p-5 rounded-2xl bg-sky-50/40 border border-sky-100 space-y-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-bold text-slate-800 flex items-center gap-2">
@@ -261,6 +318,17 @@ export const DesktopTermsSubmit: React.FC<DesktopTermsSubmitProps> = ({
               >
                 <AlertCircle className="h-4 w-4 text-rose-500 flex-shrink-0" />
                 <span>請勾選同意全部 3 項開戶條款後方可送出審核。</span>
+              </motion.div>
+            )}
+
+            {submitError && (
+              <motion.div
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 flex items-center gap-2.5 text-rose-700 text-xs font-semibold"
+              >
+                <AlertCircle className="h-4 w-4 text-rose-500 flex-shrink-0" />
+                <span>{submitError}</span>
               </motion.div>
             )}
 

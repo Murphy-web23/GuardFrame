@@ -13,13 +13,15 @@ import {
   MapPin, 
   CheckCircle2 
 } from 'lucide-react';
-import { 
-  validateFullName, 
-  validateTaiwanId, 
-  validateBirthday, 
+import {
+  validateFullName,
+  validateTaiwanId,
+  validateBirthday,
   validateTaiwanPhone,
-  validateAddress 
+  validateAddress
 } from '../../../utils/validators';
+import { createApplicantAndSession } from '../../../api/onboarding';
+import { ApiError } from '../../../api/client';
 
 interface DesktopBasicInfoProps {
   formData: FormData;
@@ -40,6 +42,8 @@ export const DesktopBasicInfo: React.FC<DesktopBasicInfoProps> = ({
   const [address, setAddress] = useState<string>(formData.address || defaultMockOcrData.address);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>('');
 
   const handleSelectDemoUser = (user: DemoUser) => {
     setFullName(user.fullName);
@@ -51,7 +55,7 @@ export const DesktopBasicInfo: React.FC<DesktopBasicInfoProps> = ({
     setErrors({});
   };
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     const newErrors: Record<string, string> = {};
 
     if (!fullName.trim() || !validateFullName(fullName)) {
@@ -75,16 +79,39 @@ export const DesktopBasicInfo: React.FC<DesktopBasicInfoProps> = ({
       return;
     }
 
-    updateFormData({
-      fullName,
-      idNumber,
-      birthday,
-      phone,
-      email,
-      address,
-    });
+    setSubmitError('');
+    setIsSubmitting(true);
+    try {
+      const { applicantId, sessionId } = await createApplicantAndSession({
+        name: fullName,
+        idNumber,
+        birthDate: birthday,
+        phone,
+        email: email || 'user@example.com',
+        address,
+      });
 
-    onNext();
+      updateFormData({
+        fullName,
+        idNumber,
+        birthday,
+        phone,
+        email,
+        address,
+        applicantId,
+        sessionId,
+      });
+
+      onNext();
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError
+          ? `送出失敗：${err.message}`
+          : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -218,14 +245,18 @@ export const DesktopBasicInfo: React.FC<DesktopBasicInfoProps> = ({
           <DemoUserPicker onSelectUser={handleSelectDemoUser} />
         </div>
 
-        <div className="pt-4 border-t border-slate-100 flex justify-end">
+        <div className="pt-4 border-t border-slate-100 flex flex-col items-end gap-2">
+          {submitError && (
+            <p className="text-xs text-rose-500 font-medium">{submitError}</p>
+          )}
           <button
             id="desktop-confirm-basic-info-btn"
             type="button"
             onClick={handleConfirm}
-            className="w-full sm:w-auto min-w-[160px] py-3.5 px-8 rounded-2xl bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white font-bold text-sm shadow-lg shadow-sky-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+            disabled={isSubmitting}
+            className="w-full sm:w-auto min-w-[160px] py-3.5 px-8 rounded-2xl bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white font-bold text-sm shadow-lg shadow-sky-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            <span>確認資料</span>
+            <span>{isSubmitting ? '送出中…' : '確認資料'}</span>
             <ArrowRight className="h-4 w-4 stroke-[2.5]" />
           </button>
         </div>

@@ -29,19 +29,35 @@ export const RecentVerificationsTable: React.FC<RecentVerificationsTableProps> =
   const [statusFilter, setStatusFilter] = useState<'all' | VerificationStatus>('all');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // Filter logic
+  // Filter logic。'high_risk' 這個 tab 篩的是 riskLevel（後端 decision.
+  // riskScore 換算出來的三段風險等級），不是 verificationStatus——
+  // 真的資料只會有 passed/pending/failed 三種 verificationStatus（見
+  // AdminLayout.tsx 的 mapBackendRecord 映射說明，後端沒有獨立的
+  // high_risk/flagged 狀態），照 verificationStatus 篩 high_risk 對真的
+  // 資料永遠篩不到東西。
   const filteredRecords = useMemo(() => {
     return records.filter((rec) => {
-      const matchSearch = 
+      const matchSearch =
         rec.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
         rec.applicantName.includes(searchTerm) ||
         rec.idNumberMasked.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchStatus = statusFilter === 'all' || rec.verificationStatus === statusFilter;
+      const matchStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'high_risk' ? rec.riskLevel === 'high' : rec.verificationStatus === statusFilter);
 
       return matchSearch && matchStatus;
     });
   }, [records, searchTerm, statusFilter]);
+
+  const pendingCount = useMemo(
+    () => records.filter((r) => r.verificationStatus === 'pending').length,
+    [records]
+  );
+  const highRiskCount = useMemo(
+    () => records.filter((r) => r.riskLevel === 'high').length,
+    [records]
+  );
 
   const handleToggleSelect = (id: string) => {
     setSelectedIds((prev) => 
@@ -90,8 +106,8 @@ export const RecentVerificationsTable: React.FC<RecentVerificationsTableProps> =
           <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
             {[
               { key: 'all', label: '全部' },
-              { key: 'pending', label: '待審核 (32)' },
-              { key: 'high_risk', label: '高風險 (8)' },
+              { key: 'pending', label: `待審核 (${pendingCount})` },
+              { key: 'high_risk', label: `高風險 (${highRiskCount})` },
               { key: 'passed', label: '已通過' },
               { key: 'failed', label: '未通過' },
             ].map((tab) => (

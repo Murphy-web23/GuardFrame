@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { FormData } from '../../types';
+import { setupAccount, ApiError } from '../../api/client';
 import { 
   ShieldCheck, 
   FileText, 
@@ -33,12 +34,20 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
   const [agreePrivacy, setAgreePrivacy] = useState<boolean>(formData.agreePrivacy ?? false);
   const [agreeElectronic, setAgreeElectronic] = useState<boolean>(formData.agreeElectronic ?? false);
 
+  // 2026-08-20 新增：後端 account-setup 要求 6 位數交易密碼
+  // （CONVENTIONS §5.8），但前端原本沒有任何畫面收集這個值
+  // （FormData.accountPin 定義了卻從沒被設定過）——這裡補上最小可用的
+  // 輸入欄位，不是重新設計整個帳戶設定流程。
+  const [accountPin, setAccountPin] = useState<string>(formData.accountPin || '');
+  const [pinError, setPinError] = useState<string>('');
+
   // Modal State for Terms viewer
   const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'electronic' | null>(null);
-  
+
   // Submission Loading State
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showValidationWarning, setShowValidationWarning] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>('');
 
   const isAllTermsAgreed = agreeTerms && agreePrivacy && agreeElectronic;
 
@@ -50,26 +59,57 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
     if (nextVal) setShowValidationWarning(false);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!isAllTermsAgreed) {
       setShowValidationWarning(true);
       return;
     }
+    if (!/^\d{6}$/.test(accountPin)) {
+      setPinError('請輸入 6 位數字交易密碼');
+      return;
+    }
+    if (!formData.applicantId || !formData.sessionId) {
+      setSubmitError('找不到申請資料，請回到「確認個人資料」重新送出一次');
+      return;
+    }
 
     setShowValidationWarning(false);
+    setPinError('');
+    setSubmitError('');
     setIsSubmitting(true);
 
-    updateFormData({
-      agreeTerms,
-      agreePrivacy,
-      agreeElectronic,
-    });
+    try {
+      // 真的呼叫 POST /api/applicants/{id}/account-setup（§5.8）。
+      // cardStyle -> accountType、notificationMethod -> notificationPreference
+      // 是這次整合時決定的映射，後端跟前端在這兩個欄位上本來就沒有
+      // 完全對應的概念，見 07 spec 的說明。
+      await setupAccount(formData.applicantId, formData.sessionId, {
+        accountType: formData.cardStyle === 'style_b' ? 'type3' : 'type1',
+        transactionPassword: accountPin,
+        notificationPreference: {
+          sms: formData.notificationMethod === 'sms' || formData.notificationMethod === 'both',
+          email: formData.notificationMethod === 'email' || formData.notificationMethod === 'both',
+        },
+        termsAccepted: true,
+      });
 
-    // Simulated submission delay for gentle feedback
-    setTimeout(() => {
-      setIsSubmitting(false);
+      updateFormData({
+        agreeTerms,
+        agreePrivacy,
+        agreeElectronic,
+        accountPin,
+      });
+
       onNext();
-    }, 1200);
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError
+          ? `送出失敗：${err.message}`
+          : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const cardStyleName = formData.cardStyle === 'style_b' ? '極光冰川白 (限定版)' : '極簡深海藍 (經典版)';
@@ -123,6 +163,28 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
               <p className="font-semibold text-slate-700">{notifyName}</p>
             </div>
           </div>
+        </div>
+
+        {/* Transaction Password (6-digit PIN) */}
+        <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+          <label htmlFor="mobile-account-pin" className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            <Lock className="h-3.5 w-3.5 text-sky-600" />
+            <span>設定交易密碼（6 位數字）</span>
+          </label>
+          <input
+            id="mobile-account-pin"
+            type="password"
+            inputMode="numeric"
+            maxLength={6}
+            value={accountPin}
+            onChange={(e) => {
+              setAccountPin(e.target.value.replace(/\D/g, '').slice(0, 6));
+              setPinError('');
+            }}
+            placeholder="請輸入 6 位數字"
+            className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-semibold tracking-[0.3em] text-slate-900 focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+          />
+          {pinError && <p className="text-[11px] text-rose-500 font-medium">{pinError}</p>}
         </div>
 
         {/* Legal Terms & Agreements */}
@@ -237,6 +299,17 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
           >
             <AlertCircle className="h-4 w-4 text-rose-500 flex-shrink-0" />
             <span>請勾選同意全部 3 項開戶條款後方可送出審核。</span>
+          </motion.div>
+        )}
+
+        {submitError && (
+          <motion.div
+            initial={{ opacity: 0, y: -5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-center gap-2 text-rose-700 text-xs font-semibold"
+          >
+            <AlertCircle className="h-4 w-4 text-rose-500 flex-shrink-0" />
+            <span>{submitError}</span>
           </motion.div>
         )}
 

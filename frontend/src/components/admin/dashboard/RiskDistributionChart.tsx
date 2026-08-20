@@ -14,6 +14,8 @@ interface RiskDistributionChartProps {
 }
 
 export const RiskDistributionChart: React.FC<RiskDistributionChartProps> = ({ data }) => {
+  const lowRiskPercent = data.find((item) => item.level === 'low')?.percent ?? 0;
+
   return (
     <div className="bg-white p-5 rounded-3xl border border-slate-200/80 shadow-xs space-y-4 flex flex-col justify-between">
       {/* Header */}
@@ -65,7 +67,7 @@ export const RiskDistributionChart: React.FC<RiskDistributionChartProps> = ({ da
           {/* Inner Center Label */}
           <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
             <span className="text-[11px] font-bold text-slate-400">低風險率</span>
-            <span className="text-xl font-black text-emerald-700">88.0%</span>
+            <span className="text-xl font-black text-emerald-700">{lowRiskPercent.toFixed(1)}%</span>
           </div>
         </div>
 

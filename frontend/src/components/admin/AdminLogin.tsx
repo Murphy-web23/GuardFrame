@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AIGuardian } from '../AIGuardian';
-import { DEMO_ADMIN_CREDENTIALS, setStoredAuth } from '../../data/mockAuth';
+import { DEMO_ADMIN_CREDENTIALS, setStoredAuth, setStoredAdminToken } from '../../data/mockAuth';
+import { adminLogin, ApiError } from '../../api/client';
 import { 
   Shield, 
   Lock, 
@@ -50,7 +51,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
     setErrorMessage('');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     // 1. Check empty
@@ -64,14 +65,15 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
     setStatus('loading');
     setErrorMessage('');
 
-    // Simulate authentication delay for realistic UX
-    setTimeout(() => {
-      if (
-        account.trim() === DEMO_ADMIN_CREDENTIALS.email &&
-        password === DEMO_ADMIN_CREDENTIALS.password
-      ) {
+    // 真的呼叫 POST /api/admin/login（bcrypt 比對，見 CONVENTIONS §4.9）。
+    // 成功失敗都是 HTTP 200，用 success 欄位分辨（07 spec §三 API 9），
+    // 帳號不存在跟密碼錯誤回傳同樣的訊息，不透露是哪一種失敗。
+    try {
+      const result = await adminLogin(account.trim(), password);
+      if (result.success && result.token) {
         setStatus('success');
         setStoredAuth(true);
+        setStoredAdminToken(result.token);
         setTimeout(() => {
           onLoginSuccess();
         }, 400);
@@ -79,7 +81,14 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
         setStatus('error');
         setErrorMessage('帳號或密碼錯誤，請確認後重試');
       }
-    }, 500);
+    } catch (err) {
+      setStatus('error');
+      setErrorMessage(
+        err instanceof ApiError
+          ? `登入失敗：${err.message}`
+          : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+      );
+    }
   };
 
   return (

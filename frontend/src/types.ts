@@ -25,6 +25,14 @@ export type VerificationResultState =
   | 'system_error';
 
 export interface FormData {
+  // 2026-08-20 新增：串接真的後端用。基本資料確認完成時才會建立真的
+  // applicantId（POST /api/applicants 需要全部欄位，sms_verify 那一步
+  // 使用者還沒填姓名/身分證字號，沒辦法在那時建立真的申請人），
+  // sessionId 是同一時間點靠 sms/send + sms/verify（demo 固定驗證碼）
+  // 拿到的，見 BasicInfoScreen.tsx 的說明。
+  applicantId?: number;
+  sessionId?: string;
+
   // Step 1: SMS Verify & Phone
   phone: string;
   smsCode: string;
