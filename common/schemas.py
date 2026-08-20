@@ -270,6 +270,17 @@ class ChallengesPayload(CamelModel):
     recording: RecordingInfo
 
 
+class ChallengeOrderResponse(CamelModel):
+    """GET /api/applicants/{id}/challenge-order 的回應（2026-08-19 新增，
+    §5.5 沒有列出，補上「伺服器產生隨機挑戰順序」這塊實作時新增的端點，
+    見 PHASE1_NOTES §九）。故意跟上面 ChallengesPayload.challenges 的
+    形狀完全一樣（list[ChallengeSpec]）——前端可以原封不動地把這個回應
+    存起來，播放挑戰用它、上傳 /verify 時的 challenges 欄位也直接重用，
+    不需要另外轉換格式。"""
+
+    challenges: list[ChallengeSpec]
+
+
 # --------------------------------------------------------------------------
 # API 請求/回應：POST /api/applicants（§5.5）
 # --------------------------------------------------------------------------

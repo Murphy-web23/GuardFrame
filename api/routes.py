@@ -8,6 +8,7 @@ Session 機制（sms/send、sms/verify、account-setup、reset）——這四個
 """
 
 import base64
+import random
 import secrets
 import shutil
 import tempfile
@@ -36,6 +37,7 @@ from common.schemas import (
     AdminRecordsResponse,
     ApplicantCreateRequest,
     ApplicantCreateResponse,
+    ChallengeOrderResponse,
     ChallengesPayload,
     IdCardRectifyResponse,
     LightLog,
@@ -137,6 +139,10 @@ def verify_sms(
     applicant.session_deadline_at = now + timedelta(minutes=config.SESSION_DEADLINE_MINUTES)
     applicant.sms_code = None
     applicant.sms_attempts = 0
+    # 新 session 開始，上一輪（如果有）指派的挑戰順序作廢，下次呼叫
+    # get_challenge_order() 會重新洗牌一組——順序跟 session 綁在一起，
+    # 不能讓舊 session 洗好的順序沿用到新的一輪。
+    applicant.challenge_order = None
     db.commit()
 
     return SmsVerifyResponse(
@@ -168,9 +174,48 @@ def reset_session(
     applicant.session_id = None
     applicant.sms_verified_at = None
     applicant.session_deadline_at = None
+    applicant.challenge_order = None
     db.commit()
 
     return ResetResponse(reset=True)
+
+
+@router.get("/applicants/{applicant_id}/challenge-order", response_model=ChallengeOrderResponse)
+def get_challenge_order(
+    applicant_id: int,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    db: Session = Depends(get_db),
+) -> ChallengeOrderResponse:
+    """§5.3 對照組動作挑戰：伺服器產生隨機出現順序，防止攻擊者預先錄好
+    一支照固定順序演的假影片（見 PHASE1_NOTES §九）。
+
+    同一個 session 只洗牌一次——重複呼叫（例如使用者重新整理頁面）回傳
+    同一組順序，不是每次都重新隨機，否則使用者可能已經照第一組順序
+    錄了一半，第二次呼叫又換一組會對不起來。要拿到新的一組，必須先
+    呼叫 /reset 或重新走一次 sms/verify（兩者都會清空 challenge_order，
+    見上面 reset_session()／verify_sms()）。
+
+    要求 X-Session-Id 且檢查逾時（跟 /verify 一樣）：這組順序是給步驟④
+    用的，屬於 §5.6 流程圖 15 分鐘倒數涵蓋的範圍內。
+    """
+    applicant = db.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="applicant not found")
+
+    _require_session(applicant, x_session_id, check_deadline=True)
+
+    if applicant.challenge_order is None:
+        order = list(config.BASELINE_ACTION_DURATIONS.keys())
+        random.shuffle(order)
+        applicant.challenge_order = order
+        db.commit()
+
+    return ChallengeOrderResponse(
+        challenges=[
+            {"action": action, "durationSec": config.BASELINE_ACTION_DURATIONS[action]}
+            for action in applicant.challenge_order
+        ]
+    )
 
 
 @router.post("/applicants", response_model=ApplicantCreateResponse, status_code=201)
@@ -291,6 +336,18 @@ async def verify(
         challenges_payload = ChallengesPayload.model_validate_json(challenges)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"light_log/challenges 格式錯誤：{exc}")
+
+    # §5.3／PHASE1_NOTES §九：上傳聲稱的動作順序，必須跟 get_challenge_
+    # order() 當初派給這個 session 的順序完全一致，否則「隨機順序」的
+    # 防護就形同虛設——攻擊者只要把預錄影片的中繼資料改成任意順序上傳，
+    # 影片本身沒真的照那個順序演也無所謂。沒有指派過順序（沒呼叫過
+    # get_challenge_order()）一律視為不合法，不允許略過這關直接驗證。
+    uploaded_order = [c.action for c in challenges_payload.challenges]
+    if applicant.challenge_order is None or uploaded_order != applicant.challenge_order:
+        raise HTTPException(
+            status_code=422,
+            detail="挑戰順序與系統指派的不符，請重新呼叫 challenge-order 並依指定順序錄製",
+        )
 
     suffix = Path(video.filename or "video.mp4").suffix or ".mp4"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:

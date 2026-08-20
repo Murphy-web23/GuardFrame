@@ -40,7 +40,7 @@ pytest tests/ -q
 | `track4_occlusion/` | 完成（後端）。合成「兩次揮手遮擋」情境端到端驗證（含身分互換、臉透出來、沒揮手三種失敗情境）。真人自測發現 `maxIdentityDrop` 對手部部分遮擋過度敏感，待更多樣本後校準，見 PHASE1_NOTES §2.6 |
 | `image_utils/quality.py` | 完成，`faceRatio` 需 InsightFace 模型 |
 | `image_utils/id_card.py` | 完成，合成矩形卡片驗證，真實證件照片待驗證 |
-| `baseline_challenge/` | 完成。左右轉判定用自創的幾何比例，方向已用真實自錄影片驗證並修正（2026-08-18） |
+| `baseline_challenge/` | 完成。左右轉判定用自創的幾何比例，方向已用真實自錄影片驗證並修正（2026-08-18）。伺服器端隨機挑戰順序機制（`GET .../challenge-order`）2026-08-20 補上，`/verify` 會交叉驗證上傳順序，見 `PHASE1_NOTES.md` §九 |
 | `common/fusion.py` | 完成。五層加權融合＋三段式決策，2026-08-19 改用連續信心分數（見下方說明），不再是二值化風險 |
 | `common/risk.py` | 完成。sigmoid 平滑「數值 vs 門檻」判定的共用工具，供各 track 算 `confidenceScore` |
 | `common/schemas.py` | 完成。Pydantic 契約模型（snake_case 欄位＋camelCase 別名） |

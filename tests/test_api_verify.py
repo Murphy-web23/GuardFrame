@@ -107,6 +107,11 @@ def session_headers(applicant_id):
         applicant = session.get(Applicant, applicant_id)
         applicant.session_id = token
         applicant.session_deadline_at = datetime.now() + timedelta(minutes=15)
+        # /verify 現在也要求上傳的挑戰順序跟伺服器指派的一致（見
+        # PHASE1_NOTES §九），直接寫成跟 _build_payload() 用的固定順序
+        # 一樣，不用真的先呼叫 challenge-order 端點——那支端點有自己
+        # 獨立的測試（tests/test_api_challenge_order.py）。
+        applicant.challenge_order = ["blink", "turn_left", "turn_right", "wave_hand"]
         session.commit()
     finally:
         session.close()
@@ -187,6 +192,39 @@ def test_verify_returns_422_when_quality_fails(client, applicant_id, session_hea
     # 不合格影片不值得象徵性保存（見 PHASE1_NOTES §八），確認沒有留下
     # 半調子的檔案在磁碟上。
     assert not (config.VERIFICATION_VIDEO_DIR / str(applicant_id)).exists()
+
+
+@requires_db
+def test_verify_returns_422_when_challenge_order_does_not_match(
+    client, applicant_id, session_headers, tmp_path
+):
+    """§5.3／PHASE1_NOTES §九：上傳的挑戰順序如果跟伺服器指派的
+    （session_headers fixture 設的是 blink/turn_left/turn_right/
+    wave_hand）不一樣，必須直接擋下，不然隨機順序這道防線就沒有意義。
+    """
+    video_path = tmp_path / "blank.mp4"
+    _make_test_video(video_path, 5, textured=False)
+
+    wrong_order_payload, light_log = _build_payload()
+    wrong_order_payload["challenges"] = [
+        {"action": "wave_hand", "durationSec": _DURATIONS["wave_hand"]},
+        {"action": "turn_right", "durationSec": _DURATIONS["turn_right"]},
+        {"action": "turn_left", "durationSec": _DURATIONS["turn_left"]},
+        {"action": "blink", "durationSec": _DURATIONS["blink"]},
+    ]
+
+    with open(video_path, "rb") as f:
+        response = client.post(
+            f"/api/applicants/{applicant_id}/verify",
+            files={"video": ("test.mp4", f, "video/mp4")},
+            data={
+                "light_log": json.dumps(light_log, ensure_ascii=False),
+                "challenges": json.dumps(wrong_order_payload, ensure_ascii=False),
+            },
+            headers=session_headers,
+        )
+
+    assert response.status_code == 422
 
 
 @requires_db

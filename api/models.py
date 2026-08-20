@@ -48,6 +48,11 @@ class Applicant(Base):
     sms_attempts: Mapped[int] = mapped_column(default=0)
     sms_verified_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     session_deadline_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    # 2026-08-19 新增：伺服器產生的隨機動作順序（§5.3），一個 session
+    # 只產生一次、之後重複呼叫回傳同一組，不是每次都重新洗牌——見
+    # api/routes.py get_challenge_order()。JSONB 存 action 字串的
+    # list，例如 ["turn_right", "blink", "wave_hand", "turn_left"]。
+    challenge_order: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
 
     verification_records: Mapped[list["VerificationRecordRow"]] = relationship(
         back_populates="applicant"

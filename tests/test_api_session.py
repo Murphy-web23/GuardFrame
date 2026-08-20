@@ -326,6 +326,7 @@ def test_reset_clears_session(client, applicant_id):
         applicant = session.get(Applicant, applicant_id)
         assert applicant.session_id is None
         assert applicant.session_deadline_at is None
+        assert applicant.challenge_order is None
     finally:
         session.close()
 
