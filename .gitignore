@@ -3,14 +3,19 @@ __pycache__/
 .env
 venv/
 node_modules/
-data/
+# 開頭加 / 只鎖定專案根目錄下的 data/、models/，避免連
+# frontend/src/data/ 這種同名但完全無關的資料夾也被一起忽略
+# （2026-08-20 加入 frontend/ 後才發現這個坑，data/ 沒加 / 之前
+# 曾經連前端的 src/data/ 都被忽略掉，前端那四個 mock 資料檔案
+# 差點永遠進不了 git）
+/data/
 track1_synthetic/weights/
 *.mp4
 *.pth
 *.onnx
 
 # 第三方模型檔（MediaPipe .task、InsightFace buffalo_l 等），用雲端硬碟共享
-models/
+/models/
 *.task
 
 # 開發環境雜項

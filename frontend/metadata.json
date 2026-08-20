@@ -1,0 +1,6 @@
+{
+  "name": "GuardFrame",
+  "description": "銀行 AI 身分驗證與防偽開戶系統視覺設計 (Friendly Fintech × Soft Technology)",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
