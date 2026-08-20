@@ -6,17 +6,17 @@ export interface AdminUser {
   avatarLetter: string;
 }
 
-// 2026-08-20：後台改接真的 POST /api/admin/login，這裡不再是唯一能登入
-// 的帳密——保留這組常數只給 AdminLogin.tsx 的「填入示範帳密」按鈕用，
-// 真正的帳號要用 scripts/init_admin.py 建立在資料庫裡，示範帳密只是
-// 方便輸入，不代表這裡驗證。
+// 2026-08-20：後台改接真的 POST /api/admin/login，這組常數改成真的存在
+// 於資料庫裡的帳號（開發測試用，見 PHASE1_NOTES），這樣 AdminLogin.tsx
+// 的「填入示範帳密」按鈕才能真的一鍵登入成功。要換成別的帳號，
+// 用 scripts/init_admin.py 建立新帳號後改這裡即可。
 export const DEMO_ADMIN_CREDENTIALS = {
-  email: 'admin@guardframe.demo',
-  password: 'GuardFrame123!',
+  email: 'demo-admin',
+  password: 'Demo12345!',
 };
 
 export const MOCK_ADMIN_USER: AdminUser = {
-  email: 'admin@guardframe.demo',
+  email: 'demo-admin',
   name: '陳專員',
   role: '高級風控審核師',
   department: '數位金融處 • 風險控管部',

@@ -21,6 +21,10 @@ interface AdminSidebarProps {
   onSwitchToUserPortal: () => void;
   onLogout?: () => void;
   isCollapsed?: boolean;
+  // 2026-08-20 新增：原本是寫死的「1,284」「8」，改成從 AdminLayout
+  // 算好的真實筆數傳進來。可選是因為這個元件目前沒有其他呼叫端。
+  recordsCount?: number;
+  riskCasesCount?: number;
 }
 
 export const AdminSidebar: React.FC<AdminSidebarProps> = ({
@@ -29,6 +33,8 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   onSwitchToUserPortal,
   onLogout,
   isCollapsed = false,
+  recordsCount,
+  riskCasesCount,
 }) => {
   const navItems: {
     id: AdminNavSection;
@@ -46,14 +52,14 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       id: 'records',
       label: '驗證紀錄',
       icon: FileCheck,
-      badge: '1,284',
+      badge: recordsCount !== undefined ? recordsCount.toLocaleString() : undefined,
       badgeColor: 'bg-slate-100 text-slate-600',
     },
     {
       id: 'risk_cases',
       label: '風險案件',
       icon: AlertTriangle,
-      badge: '8',
+      badge: riskCasesCount !== undefined ? String(riskCasesCount) : undefined,
       badgeColor: 'bg-rose-100 text-rose-700 font-bold',
     },
     {

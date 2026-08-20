@@ -213,6 +213,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ onSwitchToUserPortal, 
           }}
           onSwitchToUserPortal={onSwitchToUserPortal}
           onLogout={onLogout}
+          recordsCount={records.length}
+          riskCasesCount={stats.highRiskCount}
         />
       </div>
 
@@ -232,6 +234,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ onSwitchToUserPortal, 
               }}
               onSwitchToUserPortal={onSwitchToUserPortal}
               onLogout={onLogout}
+              recordsCount={records.length}
+              riskCasesCount={stats.highRiskCount}
             />
           </div>
         </div>

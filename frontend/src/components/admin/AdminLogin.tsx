@@ -169,7 +169,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
                     setAccount(e.target.value);
                     if (status !== 'loading') setStatus('initial');
                   }}
-                  placeholder="admin@guardframe.demo"
+                  placeholder={DEMO_ADMIN_CREDENTIALS.email}
                   disabled={status === 'loading'}
                   className="w-full text-xs pl-10 pr-3.5 py-3 rounded-xl border border-slate-200 bg-slate-50/70 focus:bg-white focus:border-sky-400 focus:outline-hidden focus:ring-2 focus:ring-sky-100 transition-all font-medium text-slate-800"
                 />
@@ -216,7 +216,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
               </button>
 
               <span className="text-[10px] text-slate-400 font-mono">
-                admin@guardframe.demo
+                {DEMO_ADMIN_CREDENTIALS.email}
               </span>
             </div>
 
