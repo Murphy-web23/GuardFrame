@@ -335,11 +335,21 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
           streamRef.current = null;
         }
 
+        // 2026-08-21：鏡頭框（#camera-first-viewfinder）桌面版實測寬高比
+        // 約 0.8（直的），手機版約 0.6（更窄更直）。畫面用 object-cover
+        // 撐滿框，如果跟攝影機原本要求的長寬比（改之前是桌面 16:9 橫的、
+        // 手機 3:4）差太多，會裁掉一大塊「螢幕上看不到、但後端還是收
+        // 得到」的畫面，使用者對準框內看起來夠大，後端算出來的 faceRatio
+        // 卻很小——這裡改成跟框比例接近，讓使用者在螢幕上看到的畫面盡量
+        // 貼近後端實際分析的畫面。如果要退回原本的橫向設定，把這個
+        // aspectRatio 區塊拿掉、width/height 改回 1280/720（桌面）或
+        // 720/960（手機）即可。
         const constraints: MediaStreamConstraints = {
           video: {
             facingMode: 'user',
-            width: { ideal: isDesktop ? 1280 : 720 },
-            height: { ideal: isDesktop ? 720 : 960 },
+            width: { ideal: isDesktop ? 864 : 660 },
+            height: { ideal: isDesktop ? 1080 : 1100 },
+            aspectRatio: { ideal: isDesktop ? 0.8 : 0.6 },
             // 要求瀏覽器盡量用固定的 fps 錄——後端切影格區間時是用這個
             // 事先宣告的 fps 算的（見 verificationRecording.ts 頂部
             // 的說明），沒有這個限制的話瀏覽器選的 fps 可能落差很大。
@@ -916,7 +926,12 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10 pt-10 sm:pt-14">
             <div 
               id="face-positioning-guide"
-              className={`relative w-[205px] h-[265px] sm:w-[250px] sm:h-[310px] rounded-[105px] sm:rounded-[125px] transition-all duration-500 flex flex-col items-center justify-center ${
+              // 2026-08-21：框加大約 15%（235x305 / 285x355），鼓勵使用者
+              // 站近一點，臉在畫面裡佔比才會夠（配合上面攝影機長寬比調整
+              // 一起改的，見 handleStartCamera 的說明）。要退回原本大小，
+              // 改回 w-[205px] h-[265px] sm:w-[250px] sm:h-[310px]
+              // rounded-[105px] sm:rounded-[125px] 即可。
+              className={`relative w-[235px] h-[305px] sm:w-[285px] sm:h-[355px] rounded-[120px] sm:rounded-[145px] transition-all duration-500 flex flex-col items-center justify-center ${
                 overallStage === 'track3_photometric'
                   ? photoSubState === 'completed'
                     ? 'border-[2.5px] border-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.4)] scale-[1.02]'
