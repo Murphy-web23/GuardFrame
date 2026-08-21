@@ -31,13 +31,20 @@ async function request<T>(
   const body = contentType.includes('application/json') ? await response.json() : null;
 
   if (!response.ok) {
-    // /verify 品質不合格的 422 沒有 detail 欄位（見 07 spec §三 API 6），
-    // 其餘錯誤都是 {"detail": ...}——這裡統一包成 ApiError，讓呼叫端
-    // 自己決定要不要細看 body。
-    const message =
-      (body && typeof body === 'object' && 'detail' in body
+    // /verify 品質不合格的 422 沒有 detail 欄位，而是 {"quality": {message, ...}}
+    // （見 07 spec §三 API 6／image_utils/quality.py）；其餘錯誤都是
+    // {"detail": ...}——這裡統一包成 ApiError，優先取比較好懂的那個欄位。
+    const detailMessage =
+      body && typeof body === 'object' && 'detail' in body
         ? String((body as any).detail)
-        : null) || `請求失敗（HTTP ${response.status}）`;
+        : null;
+    const qualityMessage =
+      body && typeof body === 'object' && 'quality' in body
+        ? String((body as any).quality?.message ?? '')
+        : null;
+    const message =
+      detailMessage || (qualityMessage ? `畫面品質不合格：${qualityMessage}` : null) ||
+      `請求失敗（HTTP ${response.status}）`;
     throw new ApiError(response.status, message, body);
   }
 
