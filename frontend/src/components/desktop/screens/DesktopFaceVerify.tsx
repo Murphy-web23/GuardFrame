@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FormData } from '../../../types';
 import { FaceVerificationEngine } from '../../face/FaceVerificationEngine';
+import { PhotometricConsentNotice } from '../../face/PhotometricConsentNotice';
 import { AIGuardian } from '../../AIGuardian';
 import { 
   ShieldCheck, 
@@ -29,6 +30,8 @@ export const DesktopFaceVerify: React.FC<DesktopFaceVerifyProps> = ({
   updateFormData,
   onNext,
 }) => {
+  const [hasAcknowledged, setHasAcknowledged] = useState(false);
+
   const handleVerificationComplete = (confidence: number, photometricPassed = true) => {
     updateFormData({
       faceVerified: true,
@@ -83,13 +86,17 @@ export const DesktopFaceVerify: React.FC<DesktopFaceVerifyProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left: Large In-Camera Viewfinder (7 cols) */}
         <div className="lg:col-span-7 flex flex-col items-center">
-          <FaceVerificationEngine
-            applicantId={formData.applicantId}
-            sessionId={formData.sessionId}
-            onVerificationComplete={handleVerificationComplete}
-            onProceedNext={onNext}
-            isDesktop={true}
-          />
+          {!hasAcknowledged ? (
+            <PhotometricConsentNotice onAcknowledge={() => setHasAcknowledged(true)} />
+          ) : (
+            <FaceVerificationEngine
+              applicantId={formData.applicantId}
+              sessionId={formData.sessionId}
+              onVerificationComplete={handleVerificationComplete}
+              onProceedNext={onNext}
+              isDesktop={true}
+            />
+          )}
         </div>
 
         {/* Right: Supplementary Milestones & Security Details (5 cols) */}

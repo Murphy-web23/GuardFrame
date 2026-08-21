@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { FormData } from '../../types';
 import { FaceVerificationEngine } from '../face/FaceVerificationEngine';
+import { PhotometricConsentNotice } from '../face/PhotometricConsentNotice';
 import { ShieldCheck, Info } from 'lucide-react';
 
 interface FaceVerifyScreenProps {
@@ -14,6 +15,10 @@ export const FaceVerifyScreen: React.FC<FaceVerifyScreenProps> = ({
   updateFormData,
   onNext,
 }) => {
+  // NFR-13：照明挑戰前要先事前告知，使用者確認後才進入真的錄影流程
+  // （見 PhotometricConsentNotice.tsx 頂部的說明）。
+  const [hasAcknowledged, setHasAcknowledged] = useState(false);
+
   const handleVerificationComplete = (confidence: number, photometricPassed = true) => {
     updateFormData({
       faceVerified: true,
@@ -53,13 +58,17 @@ export const FaceVerifyScreen: React.FC<FaceVerifyScreenProps> = ({
 
       {/* Primary Camera-first Viewport */}
       <div className="w-full flex-1 flex flex-col items-center justify-center">
-        <FaceVerificationEngine
-          applicantId={formData.applicantId}
-          sessionId={formData.sessionId}
-          onVerificationComplete={handleVerificationComplete}
-          onProceedNext={onNext}
-          isDesktop={false}
-        />
+        {!hasAcknowledged ? (
+          <PhotometricConsentNotice onAcknowledge={() => setHasAcknowledged(true)} />
+        ) : (
+          <FaceVerificationEngine
+            applicantId={formData.applicantId}
+            sessionId={formData.sessionId}
+            onVerificationComplete={handleVerificationComplete}
+            onProceedNext={onNext}
+            isDesktop={false}
+          />
+        )}
       </div>
 
       {/* Subtle Security Tip at Bottom */}
