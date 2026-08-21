@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>攝影機來源檢查 — GuardFrame</title>
+<style>
+  body { font-family: "Microsoft JhengHei", sans-serif; max-width: 900px; margin: 30px auto; padding: 0 20px; background: #1a1a1a; color: #eee; }
+  h1 { font-size: 1.3em; }
+  .device { background: #2a2a2a; border-radius: 8px; padding: 12px 16px; margin: 10px 0; cursor: pointer; border: 2px solid transparent; }
+  .device:hover { border-color: #555; }
+  .device.active { border-color: #4caf50; background: #223322; }
+  .device.obs { border-color: #ff9800; }
+  .device .label { font-weight: bold; }
+  .device .id { font-size: 0.8em; color: #999; word-break: break-all; }
+  #status { padding: 10px; border-radius: 6px; margin: 15px 0; }
+  #status.ok { background: #223322; color: #8f8; }
+  #status.warn { background: #332200; color: #fc8; }
+  #status.err { background: #330000; color: #f88; }
+  video { width: 100%; max-width: 480px; border-radius: 8px; margin-top: 15px; background: #000; display: block; }
+  #info { font-family: monospace; font-size: 0.85em; color: #aaa; margin-top: 8px; white-space: pre-wrap; }
+  button { background: #4caf50; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 1em; }
+  button:hover { background: #45a049; }
+</style>
+</head>
+<body>
+  <h1>攝影機來源檢查</h1>
+  <p>用來確認 OBS Virtual Camera 有沒有被瀏覽器辨識成一個正常攝影機來源。</p>
+  <button onclick="listDevices()">列出攝影機裝置</button>
+  <div id="status"></div>
+  <div id="devices"></div>
+  <video id="preview" autoplay playsinline muted></video>
+  <div id="info"></div>
+
+<script>
+let currentStream = null;
+
+async function listDevices() {
+  const statusEl = document.getElementById('status');
+  const devicesEl = document.getElementById('devices');
+  devicesEl.innerHTML = '';
+
+  try {
+    // 先要求一次權限，否則 label 會是空字串
+    const tmp = await navigator.mediaDevices.getUserMedia({ video: true });
+    tmp.getTracks().forEach(t => t.stop());
+  } catch (e) {
+    statusEl.className = 'err';
+    statusEl.textContent = '無法取得攝影機權限：' + e.name + ' — ' + e.message;
+    return;
+  }
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cams = devices.filter(d => d.kind === 'videoinput');
+
+  if (cams.length === 0) {
+    statusEl.className = 'err';
+    statusEl.textContent = '沒有偵測到任何攝影機裝置';
+    return;
+  }
+
+  const obsCam = cams.find(d => /OBS/i.test(d.label));
+  if (obsCam) {
+    statusEl.className = 'ok';
+    statusEl.textContent = `✓ 找到 OBS Virtual Camera：「${obsCam.label}」。點下面的項目來預覽。`;
+  } else {
+    statusEl.className = 'warn';
+    statusEl.textContent = '找到 ' + cams.length + ' 個攝影機來源，但沒有一個名稱包含 "OBS"。確認 OBS 裡「開始虛擬攝影機」按鈕已按下，然後重新整理這頁再試一次。';
+  }
+
+  cams.forEach(d => {
+    const div = document.createElement('div');
+    div.className = 'device' + (/OBS/i.test(d.label) ? ' obs' : '');
+    div.innerHTML = `<div class="label">${d.label || '(未知，權限可能被拒)'}</div><div class="id">${d.deviceId}</div>`;
+    div.onclick = () => preview(d.deviceId, d.label, div);
+    devicesEl.appendChild(div);
+  });
+}
+
+async function preview(deviceId, label, el) {
+  document.querySelectorAll('.device').forEach(d => d.classList.remove('active'));
+  el.classList.add('active');
+
+  if (currentStream) currentStream.getTracks().forEach(t => t.stop());
+
+  const infoEl = document.getElementById('info');
+  const video = document.getElementById('preview');
+
+  try {
+    currentStream = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: deviceId } }
+    });
+    video.srcObject = currentStream;
+
+    const track = currentStream.getVideoTracks()[0];
+    const settings = track.getSettings();
+    infoEl.textContent =
+      `來源：${label}\n` +
+      `解析度：${settings.width} x ${settings.height}\n` +
+      `宣告 fps：${settings.frameRate ?? '未知'}\n\n` +
+      `實測 fps 每秒更新一次 ↓`;
+
+    // 實測 fps：數 30 個 requestVideoFrameCallback 的時間差
+    let frameTimes = [];
+    function onFrame(now) {
+      frameTimes.push(now);
+      if (frameTimes.length > 60) frameTimes.shift();
+      if (frameTimes.length >= 2) {
+        const span = (frameTimes[frameTimes.length - 1] - frameTimes[0]) / 1000;
+        const fps = (frameTimes.length - 1) / span;
+        infoEl.textContent =
+          `來源：${label}\n` +
+          `解析度：${settings.width} x ${settings.height}\n` +
+          `宣告 fps：${settings.frameRate ?? '未知'}\n` +
+          `實測 fps：${fps.toFixed(1)}（近 ${frameTimes.length} 格平均）`;
+      }
+      if (video.srcObject === currentStream) {
+        video.requestVideoFrameCallback(onFrame);
+      }
+    }
+    if (video.requestVideoFrameCallback) {
+      video.requestVideoFrameCallback(onFrame);
+    }
+  } catch (e) {
+    infoEl.textContent = '無法開啟這個來源：' + e.name + ' — ' + e.message;
+  }
+}
+</script>
+</body>
+</html>

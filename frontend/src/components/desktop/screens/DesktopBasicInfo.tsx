@@ -1,0 +1,266 @@
+import React, { useState } from 'react';
+import { FormData } from '../../../types';
+import { defaultMockOcrData } from '../../../data/mockOcrData';
+import { DemoUserPicker } from '../../common/DemoUserPicker';
+import { DemoUser } from '../../../data/demoUsers';
+import { 
+  ArrowRight, 
+  User, 
+  CreditCard, 
+  Calendar, 
+  Phone, 
+  Mail, 
+  MapPin, 
+  CheckCircle2 
+} from 'lucide-react';
+import {
+  validateFullName,
+  validateTaiwanId,
+  validateBirthday,
+  validateTaiwanPhone,
+  validateAddress
+} from '../../../utils/validators';
+import { createApplicantAndSession } from '../../../api/onboarding';
+import { ApiError } from '../../../api/client';
+
+interface DesktopBasicInfoProps {
+  formData: FormData;
+  updateFormData: (data: Partial<FormData>) => void;
+  onNext: () => void;
+}
+
+export const DesktopBasicInfo: React.FC<DesktopBasicInfoProps> = ({
+  formData,
+  updateFormData,
+  onNext,
+}) => {
+  const [fullName, setFullName] = useState<string>(formData.fullName || defaultMockOcrData.fullName);
+  const [idNumber, setIdNumber] = useState<string>(formData.idNumber || defaultMockOcrData.idNumber);
+  const [birthday, setBirthday] = useState<string>(formData.birthday || defaultMockOcrData.birthday);
+  const [phone, setPhone] = useState<string>(formData.phone || defaultMockOcrData.phone);
+  const [email, setEmail] = useState<string>(formData.email || 'user@example.com');
+  const [address, setAddress] = useState<string>(formData.address || defaultMockOcrData.address);
+
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>('');
+
+  const handleSelectDemoUser = (user: DemoUser) => {
+    setFullName(user.fullName);
+    setIdNumber(user.idNumber);
+    setBirthday(user.birthday);
+    setPhone(user.phone);
+    setEmail(user.email);
+    setAddress(user.address);
+    setErrors({});
+  };
+
+  const handleConfirm = async () => {
+    const newErrors: Record<string, string> = {};
+
+    if (!fullName.trim() || !validateFullName(fullName)) {
+      newErrors.fullName = '請輸入完整中文姓名';
+    }
+    if (!idNumber.trim() || !validateTaiwanId(idNumber)) {
+      newErrors.idNumber = '請輸入正確的身分證字號';
+    }
+    if (!birthday.trim() || !validateBirthday(birthday)) {
+      newErrors.birthday = '請確認出生年月日（須滿 18 歲）';
+    }
+    if (!phone.trim() || !validateTaiwanPhone(phone)) {
+      newErrors.phone = '請確認手機號碼';
+    }
+    if (!address.trim() || !validateAddress(address)) {
+      newErrors.address = '請輸入完整的戶籍地址';
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+
+    setSubmitError('');
+    setIsSubmitting(true);
+    try {
+      const { applicantId, sessionId } = await createApplicantAndSession({
+        name: fullName,
+        idNumber,
+        birthDate: birthday,
+        phone,
+        email: email || 'user@example.com',
+        address,
+      });
+
+      updateFormData({
+        fullName,
+        idNumber,
+        birthday,
+        phone,
+        email,
+        address,
+        applicantId,
+        sessionId,
+      });
+
+      onNext();
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError
+          ? `送出失敗：${err.message}`
+          : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col flex-1 justify-center py-6 px-4 sm:px-8 max-w-3xl mx-auto w-full">
+      <div className="bg-white p-8 sm:p-10 rounded-3xl border border-slate-200/80 shadow-xs space-y-6">
+        <div>
+          <span className="text-xs font-bold text-sky-600 bg-sky-50 px-2.5 py-1 rounded-md border border-sky-100">
+            Step 3 / 6
+          </span>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight mt-2">
+            確認個人資料
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            系統已自動帶入證件資料，請確認或修改。
+          </p>
+        </div>
+
+        <div className="p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200/70 flex items-center justify-between text-sm">
+          <div className="flex items-center gap-2 text-emerald-800 font-bold">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <span>身分證資料已自動辨識填入</span>
+          </div>
+          <span className="text-xs text-emerald-600 font-medium">可直接於下方點擊修改欄位</span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">中文姓名</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <User className="h-4 w-4" />
+              </div>
+              <input
+                id="desktop-field-fullname"
+                type="text"
+                value={fullName}
+                onChange={(e) => {
+                  setFullName(e.target.value);
+                  setErrors((prev) => ({ ...prev, fullName: '' }));
+                }}
+                className="w-full pl-10 pr-3 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+              />
+            </div>
+            {errors.fullName && <p className="text-xs text-rose-500 pl-1">{errors.fullName}</p>}
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">身分證字號</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <CreditCard className="h-4 w-4" />
+              </div>
+              <input
+                id="desktop-field-idnumber"
+                type="text"
+                maxLength={10}
+                value={idNumber}
+                onChange={(e) => {
+                  setIdNumber(e.target.value.toUpperCase());
+                  setErrors((prev) => ({ ...prev, idNumber: '' }));
+                }}
+                className="w-full pl-10 pr-3 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none uppercase"
+              />
+            </div>
+            {errors.idNumber && <p className="text-xs text-rose-500 pl-1">{errors.idNumber}</p>}
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">出生年月日</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <Calendar className="h-4 w-4" />
+              </div>
+              <input
+                id="desktop-field-birthday"
+                type="date"
+                value={birthday}
+                onChange={(e) => {
+                  setBirthday(e.target.value);
+                  setErrors((prev) => ({ ...prev, birthday: '' }));
+                }}
+                className="w-full pl-10 pr-3 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+              />
+            </div>
+            {errors.birthday && <p className="text-xs text-rose-500 pl-1">{errors.birthday}</p>}
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">手機號碼</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <Phone className="h-4 w-4" />
+              </div>
+              <input
+                id="desktop-field-phone"
+                type="tel"
+                maxLength={10}
+                value={phone}
+                onChange={(e) => {
+                  setPhone(e.target.value.replace(/\D/g, ''));
+                  setErrors((prev) => ({ ...prev, phone: '' }));
+                }}
+                className="w-full pl-10 pr-3 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+              />
+            </div>
+            {errors.phone && <p className="text-xs text-rose-500 pl-1">{errors.phone}</p>}
+          </div>
+
+          <div className="sm:col-span-2 space-y-1.5">
+            <label className="text-xs font-bold text-slate-700">戶籍地址</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                <MapPin className="h-4 w-4" />
+              </div>
+              <input
+                id="desktop-field-address"
+                type="text"
+                value={address}
+                onChange={(e) => {
+                  setAddress(e.target.value);
+                  setErrors((prev) => ({ ...prev, address: '' }));
+                }}
+                className="w-full pl-10 pr-3 py-3 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:bg-white focus:border-sky-500 focus:ring-2 focus:ring-sky-200 outline-none"
+              />
+            </div>
+            {errors.address && <p className="text-xs text-rose-500 pl-1">{errors.address}</p>}
+          </div>
+        </div>
+
+        <div className="pt-2">
+          <DemoUserPicker onSelectUser={handleSelectDemoUser} />
+        </div>
+
+        <div className="pt-4 border-t border-slate-100 flex flex-col items-end gap-2">
+          {submitError && (
+            <p className="text-xs text-rose-500 font-medium">{submitError}</p>
+          )}
+          <button
+            id="desktop-confirm-basic-info-btn"
+            type="button"
+            onClick={handleConfirm}
+            disabled={isSubmitting}
+            className="w-full sm:w-auto min-w-[160px] py-3.5 px-8 rounded-2xl bg-sky-500 hover:bg-sky-600 active:bg-sky-700 text-white font-bold text-sm shadow-lg shadow-sky-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <span>{isSubmitting ? '送出中…' : '確認資料'}</span>
+            <ArrowRight className="h-4 w-4 stroke-[2.5]" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

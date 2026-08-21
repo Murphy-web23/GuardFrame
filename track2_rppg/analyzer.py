@@ -14,6 +14,8 @@
 import numpy as np
 
 import config
+from common.landmarks import ModelNotFoundError, extract_landmarks
+from common.risk import combine_risks, threshold_risk
 from track2_rppg import signal_utils as su
 
 # --------------------------------------------------------------------------
@@ -58,96 +60,6 @@ CHECK_LABELS = (
     "額頭與雙頰心率一致",
 )
 
-class ModelNotFoundError(RuntimeError):
-    """MediaPipe 模型檔不存在。"""
-
-
-def _create_landmarker():
-    """每次呼叫都建立一個全新的 MediaPipe Face Landmarker。
-
-    MediaPipe 1.0.0 拿掉了舊的 mp.solutions.face_mesh，只剩 Tasks API，
-    而 Tasks API 需要自備 .task 模型檔。參數名稱都對照實際安裝的版本確認過。
-
-    **不要把它快取成全域變數。** VIDEO 模式要求 timestamp 嚴格遞增，
-    重用同一個實例分析第二支影片時，timestamp 又從 0 開始，
-    MediaPipe 會把整支影片的影格全部丟掉，analyze_rppg 靜默回傳 detected=False。
-    API 每個請求處理一支影片，快取的話第二個請求就壞了。
-    建立成本約 2.4 秒，相對於 600 格的分析時間可以接受。
-    """
-    if not config.MEDIAPIPE_FACE_MODEL.exists():
-        raise ModelNotFoundError(
-            f"找不到 MediaPipe 模型檔：{config.MEDIAPIPE_FACE_MODEL}\n"
-            f"下載位置：{config.MEDIAPIPE_FACE_MODEL_URL}"
-        )
-
-    from mediapipe.tasks.python import BaseOptions
-    from mediapipe.tasks.python.vision import (
-        FaceLandmarker,
-        FaceLandmarkerOptions,
-        RunningMode,
-    )
-
-    options = FaceLandmarkerOptions(
-        base_options=BaseOptions(
-            model_asset_path=str(config.MEDIAPIPE_FACE_MODEL)
-        ),
-        # VIDEO 模式會利用前一格的結果做追蹤，比每格獨立偵測穩定也快
-        running_mode=RunningMode.VIDEO,
-        num_faces=1,
-        min_face_detection_confidence=config.MEDIAPIPE_MIN_DETECTION_CONFIDENCE,
-        min_face_presence_confidence=config.MEDIAPIPE_MIN_PRESENCE_CONFIDENCE,
-        min_tracking_confidence=config.MEDIAPIPE_MIN_TRACKING_CONFIDENCE,
-    )
-    return FaceLandmarker.create_from_options(options)
-
-
-def extract_landmarks(frames, fps):
-    """逐格抽臉部關鍵點，回傳像素座標。
-
-    參數:
-        frames: list[np.ndarray]，RGB，uint8
-        fps: float
-
-    回傳:
-        list[np.ndarray | None]，長度同 frames
-        每格是 (478, 2) 的像素座標，沒偵測到臉時為 None
-    """
-    import mediapipe as mp
-
-    landmarker = _create_landmarker()
-    results = []
-
-    try:
-        for i, frame in enumerate(frames):
-            try:
-                h, w = frame.shape[:2]
-                image = mp.Image(
-                    image_format=mp.ImageFormat.SRGB,
-                    data=np.ascontiguousarray(frame, dtype=np.uint8),
-                )
-                # timestamp 必須嚴格遞增，VIDEO 模式靠它判斷影格順序
-                timestamp_ms = int(i * 1000.0 / fps)
-                detection = landmarker.detect_for_video(image, timestamp_ms)
-
-                if not detection.face_landmarks:
-                    results.append(None)
-                    continue
-
-                # Tasks API 回傳的是正規化座標（0-1），乘回像素
-                points = np.array(
-                    [[lm.x * w, lm.y * h] for lm in detection.face_landmarks[0]],
-                    dtype=np.float64,
-                )
-                results.append(points)
-            except Exception:
-                # 單格失敗不能拖垮整段分析，記成缺失格繼續跑
-                results.append(None)
-    finally:
-        landmarker.close()
-
-    return results
-
-
 def _empty_result(snr=0.0, roi_consistency=0.0):
     """偵測失敗時的回傳值。
 
@@ -162,6 +74,9 @@ def _empty_result(snr=0.0, roi_consistency=0.0):
         "checks": [{"label": label, "passed": False} for label in CHECK_LABELS],
         "waveform": [],
         "spectrum": [],
+        # 沒有任何有效訊號時，沒有證據支持「這是真人」，信心分數保守給
+        # 最高風險（1.0），不能因為缺資料就預設安全（見 common/risk.py）。
+        "confidenceScore": 1.0,
     }
 
 
@@ -223,7 +138,7 @@ def analyze_rppg(frames: list, fps: float) -> dict:
     參數:
         frames: list[np.ndarray]
             原始影格，RGB。**傳入整支影片的全部影格**
-            長度不固定（約 540-900，對應 18-30 秒 @ 30fps）
+            長度固定約 693（約 23 秒 @ 30fps，動作挑戰 20 秒＋照明 3 秒）
             rPPG 需要足夠時長以取得頻譜解析度，因此使用全片而非單一階段
         fps: float
 
@@ -239,7 +154,11 @@ def analyze_rppg(frames: list, fps: float) -> dict:
                 {"label": str, "passed": bool}
             ],
             "waveform": list[float],       # 濾波後訊號
-            "spectrum": list[float]        # 功率頻譜，長度 64，對應 0-4 Hz
+            "spectrum": list[float],       # 功率頻譜，長度 64，對應 0-4 Hz
+            "confidenceScore": float       # 0.0-1.0，連續風險信心分數，
+                                            # 數值越高代表越可疑，供 common/
+                                            # fusion.py 加權融合用（§2 允許
+                                            # 新增欄位，不在原始契約清單）
         }
 
     備註:
@@ -311,8 +230,28 @@ def analyze_rppg(frames: list, fps: float) -> dict:
         {"label": CHECK_LABELS[2], "passed": bool(consistency_ok)},
     ]
 
+    # 連續信心分數：把 b、c 兩項判定用 sigmoid 平滑成 0-1 的風險分數再取
+    # 最大值（不是平均，理由見 common/risk.py）。a（主頻範圍）不納入——
+    # estimate_heart_rate() 本來就只在頻帶內找峰值，這項複查幾乎恆為真，
+    # 不是有鑑別力的連續訊號，見上面的判定註解。
+    snr_risk = threshold_risk(
+        best["snr"], config.RPPG_SNR_MIN, config.RPPG_SNR_RISK_SCALE, higher_is_better=True
+    )
+    consistency_risk = threshold_risk(
+        consistency,
+        config.RPPG_ROI_CONSISTENCY_MIN,
+        config.RPPG_CONSISTENCY_RISK_SCALE,
+        higher_is_better=True,
+    )
+    confidence_score = combine_risks(snr_risk, consistency_risk)
+
     return {
-        "detected": bool(in_band and snr_ok),
+        # 三項判定全部要過，detected 才是 True。
+        # SNR 的真人/攻擊分離度只有 1.6-2 dB（見 PHASE1_NOTES §5.4），跟
+        # roiConsistency 的 2.3-2.6 倍分離度比起來窄很多，容易被踩線通過；
+        # 若只看 a+b 兩項，一支 SNR 剛好壓線過關但 roiConsistency 很差的攻擊樣本
+        # 會被誤判為 detected=True。三項都要過，才不會讓最弱的一項單獨決定結果。
+        "detected": bool(in_band and snr_ok and consistency_ok),
         "heartRate": float(best["heart_rate"]) if in_band else None,
         "snr": float(best["snr"]),
         "roiConsistency": float(consistency),
@@ -326,6 +265,7 @@ def analyze_rppg(frames: list, fps: float) -> dict:
             config.RPPG_SPECTRUM_POINTS,
             config.RPPG_SPECTRUM_MAX_HZ,
         ),
+        "confidenceScore": confidence_score,
     }
 
 

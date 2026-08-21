@@ -1,0 +1,259 @@
+"""common/fusion.py 的測試。
+
+五個 track 的回傳值都用符合各自契約格式的合成 dict，不需要真的跑
+任何 analyzer，純粹驗證融合與決策的數學、reasons 組裝、對照組漏判
+標記是否正確。
+
+2026-08-19 改版：對照組/Track2-4 改成用 confidenceScore（連續信心分數）
+取代原本的二值化風險，這裡的合成 dict 也跟著加上這個欄位。
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import pytest
+
+import config
+from common import fusion
+
+
+def _baseline(verdict="pass", confidence_score=None):
+    if confidence_score is None:
+        confidence_score = 0.0 if verdict == "pass" else 1.0
+    return {
+        "standard": "ISO/IEC 30107-3 動作挑戰", "challenges": [], "verdict": verdict,
+        "verdictLabel": "判定為真人" if verdict == "pass" else "動作挑戰未完成",
+        "confidenceScore": confidence_score,
+    }
+
+
+def _synthetic(fake_probability=0.05):
+    return {"fakeProbability": fake_probability, "topSignals": []}
+
+
+def _track_result(detected=True, confidence_score=None, **extra):
+    if confidence_score is None:
+        confidence_score = 0.0 if detected else 1.0
+    result = {"detected": detected, "checks": [], "confidenceScore": confidence_score}
+    result.update(extra)
+    return result
+
+
+BASELINE_PASS = _baseline("pass")
+BASELINE_FAIL = _baseline("reject")
+SYNTHETIC_ZERO = _synthetic(0.0)  # 用於「其他層都乾淨」的背景值，隔離出單層測試
+SYNTHETIC_LOW = _synthetic(0.05)
+SYNTHETIC_HIGH = _synthetic(0.94)
+RPPG_PASS = _track_result(True, heartRate=70.0, snr=5.0, roiConsistency=0.9, waveform=[], spectrum=[])
+RPPG_FAIL = _track_result(False, heartRate=None, snr=0.5, roiConsistency=0.2, waveform=[], spectrum=[])
+PHOTO_PASS = _track_result(True, correlation=0.8, latencyMs=20.0, geometryScore=0.9,
+                            sequence=[], lightCurve=[], reflectCurve=[])
+PHOTO_FAIL = _track_result(False, correlation=0.05, latencyMs=None, geometryScore=0.1,
+                            sequence=[], lightCurve=[], reflectCurve=[])
+OCC_PASS = _track_result(True, waveCyclesDetected=3, identityStability=0.95, maxIdentityDrop=0.05,
+                          occlusionSegments=[], layerScore=0.8, anomalyFrames=[], stabilityCurve=[])
+OCC_FAIL = _track_result(False, waveCyclesDetected=3, identityStability=0.5, maxIdentityDrop=0.6,
+                          occlusionSegments=[], layerScore=0.2, anomalyFrames=[1, 2], stabilityCurve=[])
+
+
+# --------------------------------------------------------------------------
+# _layer_passed（不受這次改版影響，仍然只看 detected/verdict）
+# --------------------------------------------------------------------------
+
+
+def test_layer_passed_baseline_uses_verdict_field():
+    assert fusion._layer_passed("baseline", BASELINE_PASS) is True
+    assert fusion._layer_passed("baseline", BASELINE_FAIL) is False
+
+
+def test_layer_passed_synthetic_uses_threshold_not_detected_field():
+    assert fusion._layer_passed("synthetic", SYNTHETIC_LOW) is True
+    assert fusion._layer_passed("synthetic", SYNTHETIC_HIGH) is False
+
+
+def test_layer_passed_others_use_detected_field():
+    assert fusion._layer_passed("rppg", RPPG_PASS) is True
+    assert fusion._layer_passed("rppg", RPPG_FAIL) is False
+    assert fusion._layer_passed("photometric", PHOTO_PASS) is True
+    assert fusion._layer_passed("occlusion", OCC_FAIL) is False
+
+
+# --------------------------------------------------------------------------
+# _layer_risk
+# --------------------------------------------------------------------------
+
+
+def test_layer_risk_synthetic_scales_probability_to_100():
+    assert fusion._layer_risk("synthetic", _synthetic(0.3)) == pytest.approx(30.0)
+
+
+def test_layer_risk_synthetic_clamps_out_of_range_probability():
+    assert fusion._layer_risk("synthetic", _synthetic(1.5)) == pytest.approx(100.0)
+    assert fusion._layer_risk("synthetic", _synthetic(-0.5)) == pytest.approx(0.0)
+
+
+def test_layer_risk_others_use_confidence_score_field():
+    """對照組/Track2-4 現在讀 confidenceScore，不是二值化 detected。"""
+    assert fusion._layer_risk("occlusion", OCC_PASS) == pytest.approx(0.0)
+    assert fusion._layer_risk("occlusion", OCC_FAIL) == pytest.approx(100.0)
+    assert fusion._layer_risk("occlusion", {"confidenceScore": 0.62}) == pytest.approx(62.0)
+
+
+def test_layer_risk_clamps_confidence_score_out_of_range():
+    assert fusion._layer_risk("rppg", {"confidenceScore": 1.5}) == pytest.approx(100.0)
+    assert fusion._layer_risk("rppg", {"confidenceScore": -0.5}) == pytest.approx(0.0)
+
+
+def test_layer_risk_defaults_to_max_risk_when_confidence_score_missing():
+    """缺 confidenceScore 欄位時保守給最高風險，不能預設安全。"""
+    assert fusion._layer_risk("photometric", {"detected": True}) == pytest.approx(100.0)
+
+
+# --------------------------------------------------------------------------
+# compute_risk_score
+# --------------------------------------------------------------------------
+
+
+def test_compute_risk_score_all_pass_is_zero():
+    score = fusion.compute_risk_score(BASELINE_PASS, SYNTHETIC_ZERO, RPPG_PASS, PHOTO_PASS, OCC_PASS)
+    assert score == 0
+
+
+def test_compute_risk_score_all_fail_is_hundred():
+    score = fusion.compute_risk_score(
+        BASELINE_FAIL, _synthetic(1.0), RPPG_FAIL, PHOTO_FAIL, OCC_FAIL
+    )
+    assert score == 100
+
+
+def test_compute_risk_score_uses_intermediate_confidence_scores():
+    """信心分數不是只有 0 或 1 時，風險分數應該落在對應的中間值——
+    這是這次改版要達到的效果，跟舊版二值化只會出現整數倍權重不同。
+    """
+    mid_occlusion = _track_result(False, confidence_score=0.5, waveCyclesDetected=2,
+                                   identityStability=0.85, maxIdentityDrop=0.25,
+                                   occlusionSegments=[], layerScore=0.6, anomalyFrames=[],
+                                   stabilityCurve=[])
+    score = fusion.compute_risk_score(
+        BASELINE_PASS, SYNTHETIC_ZERO, RPPG_PASS, PHOTO_PASS, mid_occlusion
+    )
+    # 只有 occlusion 貢獻風險：0.35 權重 × 0.5 信心分數 × 100 = 17.5 → 四捨五入 18
+    assert score == round(config.WEIGHT_OCCLUSION * 0.5 * 100)
+
+
+@pytest.mark.parametrize(
+    "failing_layer,expected",
+    [
+        ("baseline", config.WEIGHT_BASELINE),
+        ("synthetic", config.WEIGHT_SYNTHETIC),
+        ("rppg", config.WEIGHT_RPPG),
+        ("photometric", config.WEIGHT_PHOTOMETRIC),
+        ("occlusion", config.WEIGHT_OCCLUSION),
+    ],
+)
+def test_compute_risk_score_single_layer_failure_matches_its_weight(failing_layer, expected):
+    args = {
+        "baseline": BASELINE_PASS,
+        "synthetic": SYNTHETIC_ZERO,
+        "rppg": RPPG_PASS,
+        "photometric": PHOTO_PASS,
+        "occlusion": OCC_PASS,
+    }
+    fail_values = {
+        "baseline": BASELINE_FAIL,
+        "synthetic": _synthetic(1.0),
+        "rppg": RPPG_FAIL,
+        "photometric": PHOTO_FAIL,
+        "occlusion": OCC_FAIL,
+    }
+    args[failing_layer] = fail_values[failing_layer]
+
+    score = fusion.compute_risk_score(
+        args["baseline"], args["synthetic"], args["rppg"], args["photometric"], args["occlusion"]
+    )
+    assert score == round(expected * 100)
+
+
+# --------------------------------------------------------------------------
+# compute_verdict（區間邊界）
+# --------------------------------------------------------------------------
+
+
+def test_compute_verdict_boundaries():
+    assert fusion.compute_verdict(config.RISK_PASS_MAX) == "pass"
+    assert fusion.compute_verdict(config.RISK_PASS_MAX + 1) == "review"
+    assert fusion.compute_verdict(config.RISK_REVIEW_MAX) == "review"
+    assert fusion.compute_verdict(config.RISK_REVIEW_MAX + 1) == "reject"
+
+
+# --------------------------------------------------------------------------
+# build_reasons（不受這次改版影響，仍然只看 detected/verdict）
+# --------------------------------------------------------------------------
+
+
+def test_build_reasons_empty_when_all_pass():
+    reasons = fusion.build_reasons(BASELINE_PASS, SYNTHETIC_LOW, RPPG_PASS, PHOTO_PASS, OCC_PASS)
+    assert reasons == []
+
+
+def test_build_reasons_matches_failing_layers_in_fixed_order():
+    reasons = fusion.build_reasons(BASELINE_PASS, SYNTHETIC_LOW, RPPG_FAIL, PHOTO_PASS, OCC_FAIL)
+    assert reasons == [
+        fusion._FAILURE_REASONS["rppg"],
+        fusion._FAILURE_REASONS["occlusion"],
+    ]
+
+
+# --------------------------------------------------------------------------
+# is_baseline_missed
+# --------------------------------------------------------------------------
+
+
+def test_is_baseline_missed_true_when_baseline_passed_but_overall_rejected():
+    assert fusion.is_baseline_missed(BASELINE_PASS, "reject") is True
+
+
+def test_is_baseline_missed_false_when_baseline_itself_failed():
+    assert fusion.is_baseline_missed(BASELINE_FAIL, "reject") is False
+
+
+def test_is_baseline_missed_false_when_overall_not_rejected():
+    assert fusion.is_baseline_missed(BASELINE_PASS, "pass") is False
+
+
+# --------------------------------------------------------------------------
+# fuse_decision：端到端
+# --------------------------------------------------------------------------
+
+
+def test_fuse_decision_all_pass():
+    decision = fusion.fuse_decision(BASELINE_PASS, SYNTHETIC_ZERO, RPPG_PASS, PHOTO_PASS, OCC_PASS)
+    assert decision == {
+        "riskScore": 0,
+        "verdict": "pass",
+        "verdictLabel": "通過",
+        "reasons": [],
+    }
+
+
+def test_fuse_decision_realtime_faceswap_scenario_is_rejected():
+    """比照 PLAN.md「五種攻擊情境的攔截分佈」表的「即時臉部重繪」列：
+    對照組✓／Track1✗／Track2部分✗／Track3✓／Track4✗，結果應為拒絕。
+    這是整套五層架構的論證核心（只有 Track 4 抓得到即時換臉），
+    直接用融合邏輯驗證這個結論在目前的權重下確實成立，改版後（連續
+    信心分數）依然成立。
+    """
+    decision = fusion.fuse_decision(
+        BASELINE_PASS, SYNTHETIC_HIGH, RPPG_FAIL, PHOTO_PASS, OCC_FAIL
+    )
+    assert decision["verdict"] == "reject"
+    assert fusion._FAILURE_REASONS["occlusion"] in decision["reasons"]
+
+
+def test_fuse_decision_verdict_label_matches_verdict():
+    decision = fusion.fuse_decision(
+        BASELINE_FAIL, SYNTHETIC_LOW, RPPG_PASS, PHOTO_PASS, OCC_PASS
+    )
+    assert decision["verdictLabel"] == fusion.VERDICT_LABELS[decision["verdict"]]
