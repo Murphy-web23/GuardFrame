@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AIGuardian } from '../AIGuardian';
 import { GuardianMood } from '../../types';
-import { 
-  CheckCircle2, 
-  ShieldCheck, 
+import {
+  CheckCircle2,
+  ShieldCheck,
   ArrowRight,
   ArrowLeft,
   Eye,
@@ -15,12 +15,31 @@ import {
   Volume2,
   VolumeX,
   Play,
-  Check
+  Check,
+  AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
+import { getChallengeOrder, verifyFace, ApiError, ChallengeOrderItem } from '../../api/client';
+import {
+  ACTION_DURATIONS_SEC,
+  RECORDING_FPS,
+  generateLightLog,
+  lightLogDurationMs,
+  msRangeToFrameRange,
+  msToFrame,
+} from '../../utils/verificationRecording';
 
 export type ChallengeType = 'blink' | 'turn_left' | 'turn_right' | 'wave';
 export type OverallStage = 'ready' | 'verifying_actions' | 'track3_photometric' | 'processing' | 'success' | 'error';
 export type PhotometricSubState = 'prep' | 'holding' | 'analyzing' | 'completed';
+
+// 前端 UI 內部沿用 'wave' 這個較短的名字（動畫/圖示/文字都用它），
+// 但後端契約與上傳用的是 'wave_hand'——兩邊互轉集中在這兩個函式，
+// 不要在別的地方各自手動拼字串。
+const toLocalType = (action: ChallengeOrderItem['action']): ChallengeType =>
+  action === 'wave_hand' ? 'wave' : action;
+const toBackendAction = (type: ChallengeType): ChallengeOrderItem['action'] =>
+  type === 'wave' ? 'wave_hand' : type;
 
 export interface ChallengeConfig {
   type: ChallengeType;
@@ -65,46 +84,45 @@ export const CHALLENGE_MAP: Record<ChallengeType, ChallengeConfig> = {
     type: 'wave',
     title: '請在臉部前方揮手至少 2 次',
     sub: '在臉部前方左右自然揮動手部至少兩次',
-    durationSec: 5, // 5 seconds
+    // 7 秒，對應後端 config.BASELINE_ACTION_DURATIONS['wave_hand']。
+    // 這裡原本寫 5 秒，跟後端對不起來——揮手這段同時也是 Track 4
+    // 遮擋分析要用的區間（phases.occlusion），時長算錯會讓後端切出
+    // 錯誤的影格範圍，見 verificationRecording.ts 的說明。
+    durationSec: ACTION_DURATIONS_SEC.wave_hand,
     voiceText: '請在臉部前方揮手至少兩次。',
     icon: Hand,
     emoji: '👋',
   },
 };
 
-// Default Mock Challenge Sequence (4 actions, each appearing exactly once)
-export const DEFAULT_MOCK_CHALLENGE_SEQUENCE: ChallengeType[] = [
-  'turn_left',
-  'wave',
-  'blink',
-  'turn_right',
-];
-
-// Helper to generate a random permutation of the 4 actions
-export const generateRandomChallengeSequence = (): ChallengeType[] => {
-  const pool: ChallengeType[] = ['blink', 'turn_left', 'turn_right', 'wave'];
-  return [...pool].sort(() => Math.random() - 0.5);
-};
-
 interface FaceVerificationEngineProps {
-  challengeSequence?: ChallengeType[];
+  applicantId: number;
+  sessionId: string;
   onVerificationComplete: (confidence: number, photometricPassed?: boolean) => void;
   onProceedNext: () => void;
   isDesktop?: boolean;
 }
 
 export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
-  challengeSequence = DEFAULT_MOCK_CHALLENGE_SEQUENCE,
+  applicantId,
+  sessionId,
   onVerificationComplete,
   onProceedNext,
   isDesktop = false,
 }) => {
-  // Total Verification Time is strictly 23 seconds (3 + 5 + 5 + 5 + 5 = 23)
-  const TOTAL_SESSION_SECONDS = 23;
-  const [totalSecondsRemaining, setTotalSecondsRemaining] = useState<number>(TOTAL_SESSION_SECONDS);
+  // 22-23 秒左右（動作階段固定 20 秒 + 燈光階段 5 段 400-600ms，實際
+  // 總長要等伺服器指派的挑戰順序＋這次隨機產生的燈光序列都到手才知道
+  // 確切數字，這裡先給一個含燈光平均值的初始估計值，開始錄影時會
+  // 用 timelineRef 算出的真實值覆蓋）。
+  const [totalSecondsRemaining, setTotalSecondsRemaining] = useState<number>(23);
 
-  // Active Challenge sequence (4 actions)
-  const [activeSequence, setActiveSequence] = useState<ChallengeType[]>(challengeSequence);
+  // 伺服器指派的挑戰順序（§5.3／PHASE1_NOTES §九），元件掛載時抓取，
+  // 不是前端自己隨機排的——見下面的 useEffect。
+  const [activeSequence, setActiveSequence] = useState<ChallengeType[]>([]);
+  const [orderLoading, setOrderLoading] = useState<boolean>(true);
+  const [orderError, setOrderError] = useState<string>('');
+  const backendOrderRef = useRef<ChallengeOrderItem[]>([]);
+
   const [overallStage, setOverallStage] = useState<OverallStage>('ready');
   const [currentChallengeIndex, setCurrentChallengeIndex] = useState<number>(0);
   const [currentCountdown, setCurrentCountdown] = useState<number>(5);
@@ -116,6 +134,9 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
   // Track 3 Photometric States (5 seconds total)
   const [photoSubState, setPhotoSubState] = useState<PhotometricSubState>('prep');
   const [photoCountdown, setPhotoCountdown] = useState<number>(5);
+  // 目前正在顯示 light_log 的第幾段（驅動全螢幕顏色閃爍），見下面
+  // Photometric Response 的 useEffect。
+  const [currentLightSegmentIndex, setCurrentLightSegmentIndex] = useState<number>(0);
 
   // Voice Guidance Settings & Audio Controller
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
@@ -131,6 +152,50 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
+  // 真的錄影＋上傳 /verify 用的狀態。timelineRef 在按下「開始驗證」的
+  // 當下一次算好（見 handleStartVerification），之後動作/燈光階段只是
+  // 照著這份預先算好的時間表播放，不會在過程中重新量測——這樣比較不會
+  // 有計時器誤差累積的問題。
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const timelineRef = useRef<{
+    boundaries: { action: ChallengeOrderItem['action']; startMs: number; endMs: number }[];
+    actionPhaseEndMs: number;
+    lightLog: ReturnType<typeof generateLightLog> | null;
+    totalMs: number;
+  }>({ boundaries: [], actionPhaseEndMs: 0, lightLog: null, totalMs: 0 });
+  const [verifyError, setVerifyError] = useState<string>('');
+  const [decisionSummary, setDecisionSummary] = useState<{
+    verdictLabel: string;
+    riskScore: number;
+    reasons: string[];
+  } | null>(null);
+
+  // 掛載時跟後端要伺服器指派的隨機挑戰順序（§5.3／PHASE1_NOTES §九），
+  // 不是前端自己 Math.random() 排——這是「隨機順序」這個安全機制真正
+  // 生效的關鍵，見 verificationRecording.ts 頂部的說明。
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await getChallengeOrder(applicantId, sessionId);
+        if (cancelled) return;
+        backendOrderRef.current = result.challenges;
+        setActiveSequence(result.challenges.map((c) => toLocalType(c.action)));
+        setOrderLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        setOrderError(
+          err instanceof ApiError ? err.message : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+        );
+        setOrderLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applicantId, sessionId]);
 
   // Pre-fetch speech synthesis voices
   useEffect(() => {
@@ -275,6 +340,10 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
             facingMode: 'user',
             width: { ideal: isDesktop ? 1280 : 720 },
             height: { ideal: isDesktop ? 720 : 960 },
+            // 要求瀏覽器盡量用固定的 fps 錄——後端切影格區間時是用這個
+            // 事先宣告的 fps 算的（見 verificationRecording.ts 頂部
+            // 的說明），沒有這個限制的話瀏覽器選的 fps 可能落差很大。
+            frameRate: { ideal: RECORDING_FPS, max: RECORDING_FPS },
           },
           audio: false,
         };
@@ -389,50 +458,147 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
     return () => clearInterval(timer);
   }, [overallStage, currentChallengeIndex, activeSequence]);
 
-  // Photometric Response (Fixed 5 Seconds)
+  // Photometric Response：真的燈光序列，時長由這次隨機產生的 light_log
+  // 決定（5 段、每段 400-600ms，不是固定 5 秒）。段落切換用 50ms 的
+  // tick 檢查經過時間落在哪一段，不是逐秒遞減。
   useEffect(() => {
-    let photoTimer: any;
-    if (overallStage === 'track3_photometric') {
-      speakPrompt('請保持臉部不動。', 'track3_holding');
-      setPhotoSubState('analyzing');
-      let count = 5;
-      setPhotoCountdown(count);
-
-      photoTimer = setInterval(() => {
-        count -= 1;
-        if (count > 0) {
-          setPhotoCountdown(count);
-        } else if (count === 0) {
-          setPhotoCountdown(0);
-          speakPrompt('照明響應驗證完成。', 'track3_completed');
-          setPhotoSubState('completed');
-        } else if (count <= -1) {
-          clearInterval(photoTimer);
-          setOverallStage('processing');
-        }
-      }, 1000);
-
-      return () => {
-        if (photoTimer) clearInterval(photoTimer);
-      };
+    if (overallStage !== 'track3_photometric') return;
+    const lightLog = timelineRef.current.lightLog;
+    if (!lightLog) {
+      // 理論上 handleStartVerification 一定會先產生好，這裡只是防禦
+      setOverallStage('processing');
+      return;
     }
+    speakPrompt('請保持臉部不動。', 'track3_holding');
+    setPhotoSubState('analyzing');
+    const totalLightMs = lightLogDurationMs(lightLog);
+    const phaseStart = performance.now();
+    setCurrentLightSegmentIndex(0);
+
+    const tick = setInterval(() => {
+      const elapsed = performance.now() - phaseStart;
+      const idx = lightLog.segments.findIndex(
+        (seg) => elapsed >= seg.startMs && elapsed < seg.startMs + seg.durationMs
+      );
+      if (idx >= 0) setCurrentLightSegmentIndex(idx);
+      setPhotoCountdown(Math.max(0, Math.ceil((totalLightMs - elapsed) / 1000)));
+    }, 50);
+
+    const endTimer = setTimeout(() => {
+      clearInterval(tick);
+      speakPrompt('照明響應驗證完成。', 'track3_completed');
+      setPhotoSubState('completed');
+      // 停止錄影，onstop（在下面的 processing effect 裡等待）會 flush
+      // 出最後一段資料，接著才真的組 payload 呼叫 /verify。
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      setOverallStage('processing');
+    }, totalLightMs);
+
+    return () => {
+      clearInterval(tick);
+      clearTimeout(endTimer);
+    };
   }, [overallStage]);
 
-  // Processing to Success Transition
+  // Processing：真的呼叫 POST /verify，等後端五層分析跑完——實測數十秒
+  // 到數分鐘（MediaPipe/InsightFace 在 CPU 上逐格運算），不是假的
+  // 1.5 秒，見 07_Frontend_API_Integration_Specification.md 風險 7。
   useEffect(() => {
-    if (overallStage === 'processing') {
-      const timer = setTimeout(() => {
-        setOverallStage('success');
-        setTotalSecondsRemaining(0);
-        speakPrompt('身分驗證完成。', 'verification_success');
-        onVerificationComplete(99.8, true);
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [overallStage, onVerificationComplete]);
+    if (overallStage !== 'processing') return;
+    let cancelled = false;
 
-  // Start verification handler
+    (async () => {
+      // MediaRecorder.stop() 是非同步的，要等 onstop 真的把最後一段
+      // 資料 flush 出來才能組出完整影片，不能提前用 recordedChunksRef
+      // 現有內容當作已經完整。
+      const recorder = mediaRecorderRef.current;
+      const videoBlob = await new Promise<Blob>((resolve) => {
+        if (!recorder || recorder.state === 'inactive') {
+          resolve(new Blob(recordedChunksRef.current, { type: 'video/webm' }));
+          return;
+        }
+        recorder.onstop = () => {
+          resolve(new Blob(recordedChunksRef.current, { type: recorder.mimeType || 'video/webm' }));
+        };
+      });
+
+      const { boundaries, actionPhaseEndMs, lightLog, totalMs } = timelineRef.current;
+      if (cancelled) return;
+      if (!lightLog || boundaries.length === 0) {
+        setVerifyError('錄影資料不完整，請重新錄製');
+        setOverallStage('error');
+        return;
+      }
+
+      const waveHandBoundary = boundaries.find((b) => b.action === 'wave_hand');
+      const phases = {
+        action: msRangeToFrameRange(0, actionPhaseEndMs),
+        lighting: msRangeToFrameRange(actionPhaseEndMs, actionPhaseEndMs + lightLogDurationMs(lightLog)),
+        occlusion: waveHandBoundary
+          ? msRangeToFrameRange(waveHandBoundary.startMs, waveHandBoundary.endMs)
+          : msRangeToFrameRange(0, actionPhaseEndMs),
+      };
+
+      try {
+        const record = await verifyFace(applicantId, sessionId, videoBlob, lightLog, {
+          challenges: backendOrderRef.current,
+          recording: {
+            durationSec: totalMs / 1000,
+            fps: RECORDING_FPS,
+            totalFrames: msToFrame(totalMs),
+            phases,
+          },
+        });
+        if (cancelled) return;
+
+        setDecisionSummary({
+          verdictLabel: record.decision.verdictLabel,
+          riskScore: record.decision.riskScore,
+          reasons: record.decision.reasons,
+        });
+
+        if (record.decision.verdict === 'pass') {
+          setOverallStage('success');
+          setTotalSecondsRemaining(0);
+          speakPrompt('身分驗證完成。', 'verification_success');
+          // riskScore 是 0-100、越低越可信；換算成既有 UI 欄位
+          // （faceConfidence）用的「信心分數」，方向跟原本假資料一致。
+          onVerificationComplete(
+            100 - record.decision.riskScore,
+            record.photometric.confidenceScore < 0.5
+          );
+        } else {
+          setOverallStage('error');
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setVerifyError(
+          err instanceof ApiError ? err.message : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+        );
+        setOverallStage('error');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [overallStage, applicantId, sessionId, onVerificationComplete]);
+
+  // Start verification handler：真的開始錄影，不是只播動畫
   const handleStartVerification = () => {
+    if (useSimulatedFeed || !streamRef.current) {
+      setVerifyError('需要真的相機權限才能進行人臉驗證，請允許存取相機後重新整理頁面再試一次');
+      setOverallStage('error');
+      return;
+    }
+    if (orderLoading || orderError || backendOrderRef.current.length === 0) {
+      setVerifyError(orderError || '尚未取得驗證挑戰順序，請稍候再試');
+      setOverallStage('error');
+      return;
+    }
+
     // Prime and unlock audio context & speech synthesis on user gesture
     if (typeof window !== 'undefined') {
       if ('speechSynthesis' in window) {
@@ -447,11 +613,48 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         }
       } catch (_) {}
     }
-    // Generate fresh random sequence of 4 challenges
-    const freshSequence = generateRandomChallengeSequence();
-    setActiveSequence(freshSequence);
+
+    // 預先算好整段時間表：動作階段照伺服器指派的順序＋固定秒數，
+    // 加上這次隨機產生的燈光序列，一次決定、之後照表操課，不在過程中
+    // 用計時器重新量測（避免誤差累積）。
+    let cursor = 0;
+    const boundaries = backendOrderRef.current.map((item) => {
+      const durMs = ACTION_DURATIONS_SEC[item.action] * 1000;
+      const startMs = cursor;
+      cursor += durMs;
+      return { action: item.action, startMs, endMs: cursor };
+    });
+    const actionPhaseEndMs = cursor;
+    const lightLog = generateLightLog(Date.now());
+    const totalMs = actionPhaseEndMs + lightLogDurationMs(lightLog);
+    timelineRef.current = { boundaries, actionPhaseEndMs, lightLog, totalMs };
+
+    // 啟動真的錄影，跟預覽共用同一個 camera stream。mimeType 優先選
+    // 瀏覽器支援的 mp4，其次 webm——後端 OpenCV(ffmpeg) 兩種都能讀
+    // （已實測驗證過 webm 容器的 fps/影格數讀取正確），不強求一定要
+    // mp4，見 PHASE1_NOTES 的說明。
+    const mimeCandidates = [
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    const mimeType = mimeCandidates.find((t) => MediaRecorder.isTypeSupported(t)) || '';
+    recordedChunksRef.current = [];
+    const recorder = mimeType
+      ? new MediaRecorder(streamRef.current, { mimeType })
+      : new MediaRecorder(streamRef.current);
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+    };
+    mediaRecorderRef.current = recorder;
+    recorder.start();
+
     lastSpokenKeyRef.current = '';
-    setTotalSecondsRemaining(TOTAL_SESSION_SECONDS);
+    setVerifyError('');
+    setDecisionSummary(null);
+    setTotalSecondsRemaining(Math.ceil(totalMs / 1000));
     setCurrentChallengeIndex(0);
     setChallengeState('active');
     setWaveCount(0);
@@ -465,6 +668,7 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
   // Guardian Mood
   const getGuardianMood = (): GuardianMood => {
     if (overallStage === 'success') return 'success';
+    if (overallStage === 'error') return 'warning';
     if (overallStage === 'processing') return 'thinking';
     if (overallStage === 'verifying_actions' || overallStage === 'track3_photometric') return 'scanning';
     return 'welcoming';
@@ -513,27 +717,22 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
           )}
         </div>
 
-        {/* TRACK 3: SOFT LIGHTING CHANGE OVERLAY (Gentle Normal -> Slightly Brighter -> Normal) */}
-        {overallStage === 'track3_photometric' && (
-          <motion.div
-            id="photometric-lighting-effect"
-            className="absolute inset-0 pointer-events-none z-10"
-            animate={{
-              backgroundColor: [
-                'rgba(255, 255, 255, 0)',
-                'rgba(240, 249, 255, 0.12)',
-                'rgba(255, 255, 255, 0.20)',
-                'rgba(240, 249, 255, 0.10)',
-                'rgba(255, 255, 255, 0)',
-              ],
-            }}
-            transition={{
-              duration: 2.5,
-              repeat: Infinity,
-              ease: 'easeInOut',
-            }}
-          />
-        )}
+        {/* TRACK 3: 真的螢幕燈光顏色序列——顯示的顏色/切換時機就是實際
+            寫進 light_log 上傳給後端的那組資料，不是裝飾動畫。這裡故意
+            用高不透明度：Track 3 要靠反射到臉上的光夠亮才量得到訊號，
+            原本那個柔和的半透明效果只是視覺演出，量不到真的反射。 */}
+        {overallStage === 'track3_photometric' &&
+          timelineRef.current.lightLog &&
+          (() => {
+            const seg = timelineRef.current.lightLog!.segments[currentLightSegmentIndex];
+            return (
+              <div
+                id="photometric-lighting-effect"
+                className="absolute inset-0 pointer-events-none z-10 transition-colors duration-150"
+                style={{ backgroundColor: seg?.hex, opacity: 0.88, mixBlendMode: 'normal' }}
+              />
+            );
+          })()}
 
         {/* Camera Vignette */}
         <div className="absolute inset-0 pointer-events-none bg-gradient-to-b from-black/75 via-transparent to-black/85" />
@@ -895,7 +1094,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
               <div className="text-center">
                 <h4 className="text-base font-bold">準備好開始人臉核驗了嗎？</h4>
                 <p className="text-xs text-slate-300 mt-0.5">
-                  共 4 項動作與照明響應（全程 23 秒），請依語音提示操作。
+                  {orderLoading
+                    ? '正在向伺服器取得本次驗證的動作順序…'
+                    : orderError
+                    ? orderError
+                    : '共 4 項動作與照明響應，請依語音提示操作。'}
                 </p>
               </div>
 
@@ -903,10 +1106,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                 id="start-face-verify-btn"
                 type="button"
                 onClick={handleStartVerification}
-                className="w-full py-3.5 rounded-2xl bg-sky-500 hover:bg-sky-400 active:scale-[0.99] text-white font-bold text-sm shadow-lg shadow-sky-500/30 flex items-center justify-center gap-2 cursor-pointer transition-all"
+                disabled={orderLoading || !!orderError}
+                className="w-full py-3.5 rounded-2xl bg-sky-500 hover:bg-sky-400 active:scale-[0.99] text-white font-bold text-sm shadow-lg shadow-sky-500/30 flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Play className="h-4 w-4 fill-white" />
-                <span>開始 23 秒動態驗證</span>
+                <span>{orderLoading ? '準備中…' : '開始動態驗證'}</span>
               </button>
             </motion.div>
           )}
@@ -964,6 +1168,50 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
               >
                 <span>下一步：設定開戶服務</span>
                 <ArrowRight className="h-4 w-4" />
+              </button>
+            </motion.div>
+          )}
+
+          {/* Error / Rejected State：涵蓋兩種情況——(1) 錄影/上傳/連線
+              本身出錯（verifyError 有值），(2) 真的呼叫完 /verify、
+              後端判定 review 或 reject（decisionSummary 有值但不是
+              verdict==='pass'，見上面 processing effect 的說明）。
+              兩種都不能讓使用者直接往下一步走，只能重新錄一次。 */}
+          {overallStage === 'error' && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="w-full max-w-sm bg-slate-900/95 backdrop-blur-xl p-6 rounded-3xl border border-rose-400/50 text-white flex flex-col items-center text-center space-y-4 shadow-2xl"
+            >
+              <div className="h-14 w-14 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-500/30">
+                <AlertTriangle className="h-8 w-8" />
+              </div>
+
+              <div>
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-300 bg-rose-950/80 px-3.5 py-1 rounded-full border border-rose-400/30">
+                  {decisionSummary ? decisionSummary.verdictLabel : '驗證失敗'}
+                </span>
+                <h4 className="text-lg font-black text-white mt-2.5">
+                  {decisionSummary ? '這次驗證未通過' : '發生錯誤'}
+                </h4>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  {decisionSummary
+                    ? decisionSummary.reasons[0] || '請確認光線充足、正面注視鏡頭後重新錄製。'
+                    : verifyError}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setVerifyError('');
+                  setDecisionSummary(null);
+                  setOverallStage('ready');
+                }}
+                className="w-full py-3.5 rounded-2xl bg-white/10 hover:bg-white/20 active:scale-[0.99] text-white font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all border border-white/10"
+              >
+                <RotateCcw className="h-4 w-4" />
+                <span>重新錄製</span>
               </button>
             </motion.div>
           )}

@@ -16,6 +16,7 @@ import {
   ScanLine
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { rectifyIdCard } from '../../api/client';
 
 interface IdUploadScreenProps {
   formData: FormData;
@@ -41,10 +42,17 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
   const [cameraSide, setCameraSide] = useState<IdCardSide>('front');
   const [isCardAligned, setIsCardAligned] = useState<boolean>(false);
   const [ocrStatus, setOcrStatus] = useState<'idle' | 'scanning' | 'success' | 'failed'>('idle');
+  // 2026-08-20 新增：真的呼叫 /id-card/rectify 時的狀態，跟上面
+  // ocrStatus（姓名/字號辨識，後端沒有真的 OCR，維持 mock）分開——
+  // rectifyStatus 是「有沒有偵測到證件四個角」，ocrStatus 是「有沒有
+  // 辨識出文字」，兩件事後端目前是分開的能力。
+  const [rectifyStatus, setRectifyStatus] = useState<'idle' | 'capturing' | 'failed'>('idle');
+  const [rectifyError, setRectifyError] = useState<string>('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Auto-detect / align simulation timer when camera is active
   useEffect(() => {
@@ -90,36 +98,65 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
     setIsCameraOpen(false);
   };
 
-  // Perform Snap
-  const handleSnapPhoto = () => {
-    stopCamera();
-    if (cameraSide === 'front') {
-      setFrontCaptured(true);
-      const url = '/id-card-sample.jpg';
-      setFrontImage(url);
-      triggerOcrRecognition('front', url);
-    } else {
-      setBackCaptured(true);
-      const url = '/id-card-sample-back.jpg';
-      setBackImage(url);
-      triggerOcrRecognition('back', url);
+  // 把目前的相機畫面截成一張 Blob，共用給拍照跟上傳兩條路徑用
+  const captureVideoFrameAsBlob = (): Promise<Blob | null> => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.videoWidth === 0) return Promise.resolve(null);
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return Promise.resolve(null);
+    // 相機預覽用 -scale-x-100 鏡像顯示（比較符合直覺），但送去矯正的
+    // 畫面要用未鏡像的原始畫面，跟真實證件文字方向一致。
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.92));
+  };
+
+  // 真的呼叫 POST /api/id-card/rectify（§4.7）。失敗時（沒偵測到四個角）
+  // 停在原地讓使用者重拍，不前進、不填假資料。
+  const runRectify = async (side: IdCardSide, blob: Blob) => {
+    setRectifyStatus('capturing');
+    setRectifyError('');
+    try {
+      const result = await rectifyIdCard(blob);
+      if (!result.success || !result.rectified) {
+        setRectifyStatus('failed');
+        setRectifyError(result.message || '未偵測到證件邊界，請重新拍攝');
+        return;
+      }
+      setRectifyStatus('idle');
+      if (side === 'front') {
+        setFrontCaptured(true);
+        setFrontImage(result.rectified);
+      } else {
+        setBackCaptured(true);
+        setBackImage(result.rectified);
+      }
+      triggerOcrRecognition(side, result.rectified);
+    } catch (err) {
+      setRectifyStatus('failed');
+      setRectifyError('無法連線到後端伺服器，請確認伺服器是否已啟動');
     }
   };
 
+  // Perform Snap
+  const handleSnapPhoto = async () => {
+    const blob = await captureVideoFrameAsBlob();
+    stopCamera();
+    if (!blob) {
+      setRectifyStatus('failed');
+      setRectifyError('無法擷取相機畫面，請重新開啟相機');
+      return;
+    }
+    await runRectify(cameraSide, blob);
+  };
+
   // File Upload
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const url = URL.createObjectURL(file);
-      if (activeSide === 'front') {
-        setFrontCaptured(true);
-        setFrontImage(url);
-        triggerOcrRecognition('front', url);
-      } else {
-        setBackCaptured(true);
-        setBackImage(url);
-        triggerOcrRecognition('back', url);
-      }
+      await runRectify(activeSide, file);
     }
   };
 
@@ -221,6 +258,19 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
           )}
         </button>
       </div>
+
+      {rectifyStatus === 'capturing' && (
+        <div className="mb-3 p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs font-semibold text-sky-700 flex items-center gap-2">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          <span>正在偵測證件邊界…</span>
+        </div>
+      )}
+      {rectifyStatus === 'failed' && (
+        <div className="mb-3 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-center gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span>{rectifyError}</span>
+        </div>
+      )}
 
       {/* Active Card Side View */}
       <div className="flex flex-col flex-1 justify-between space-y-4">
@@ -410,6 +460,8 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
           onChange={handleFileUpload}
           className="hidden"
         />
+        {/* 擷取相機畫格用，不顯示在畫面上 */}
+        <canvas ref={canvasRef} className="hidden" />
 
         {/* Primary CTA: 下一步 (Enabled only when BOTH front & back are captured) */}
         <div className="pt-2">

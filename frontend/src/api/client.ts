@@ -152,10 +152,58 @@ export async function setupAccount(
   });
 }
 
-// verify()（人臉驗證核心端點）刻意不在這裡實作——前端目前沒有真的錄影／
-// 收集 light_log 的機制（見整合過程中的評估），這支端點的串接留給
-// 之後補上真的相機錄影功能時再一起做。呼叫端仍是 FaceVerificationEngine
-// 的模擬計時器，沒有被這次改動動到。
+// --------------------------------------------------------------------------
+// 人臉驗證核心端點（§5.5 POST /verify）
+// --------------------------------------------------------------------------
+
+export interface LightLogSegment {
+  color: '淡紅' | '灰白' | '淡藍' | '淡綠';
+  hex: string;
+  startMs: number;
+  durationMs: number;
+}
+
+export interface LightLog {
+  startTimestamp: number;
+  segments: LightLogSegment[];
+}
+
+export interface RecordingPhases {
+  action: [number, number];
+  lighting: [number, number];
+  occlusion: [number, number];
+}
+
+export interface ChallengesPayload {
+  challenges: ChallengeOrderItem[];
+  recording: {
+    durationSec: number;
+    fps: number;
+    totalFrames: number;
+    phases: RecordingPhases;
+  };
+}
+
+export async function verifyFace(
+  applicantId: number,
+  sessionId: string,
+  video: Blob,
+  lightLog: LightLog,
+  challenges: ChallengesPayload,
+  sourceType: string = '虛擬攝影機'
+): Promise<BackendVerificationRecord> {
+  const form = new FormData();
+  const ext = video.type.includes('mp4') ? 'mp4' : 'webm';
+  form.append('video', video, `verify.${ext}`);
+  form.append('light_log', JSON.stringify(lightLog));
+  form.append('challenges', JSON.stringify(challenges));
+  form.append('source_type', sourceType);
+  return request(`/api/applicants/${applicantId}/verify`, {
+    method: 'POST',
+    headers: { 'X-Session-Id': sessionId },
+    body: form,
+  });
+}
 
 // --------------------------------------------------------------------------
 // 後台認證與查詢

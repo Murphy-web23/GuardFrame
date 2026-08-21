@@ -45,7 +45,8 @@ pytest tests/ -q
 | `common/risk.py` | 完成。sigmoid 平滑「數值 vs 門檻」判定的共用工具，供各 track 算 `confidenceScore` |
 | `common/schemas.py` | 完成。Pydantic 契約模型（snake_case 欄位＋camelCase 別名） |
 | `common/face_utils.py` | 完成 `extract_frames()`；`extract_face()`/CLIP 對齊留給 A |
-| `api/` | 全部 9 支契約端點完成：`POST /api/applicants`、`/verify`、`id-card/rectify`、`sms/send`、`sms/verify`、`account-setup`、`reset`、`admin/login`、`admin/records`、`admin/records/{id}`（含真的接 PostgreSQL）。申請人端用 `X-Session-Id` header，後台端用 `Authorization: Bearer <token>`，兩套機制不要搞混，細節見 `PHASE1_NOTES.md` §七。CORS 已開放（開發階段 `allow_origins=["*"]`，正式環境要改成前端實際網域）。23 秒驗證影片已做**象徵性本機保存**（只有走完整條管線的紀錄才留，不是合規等級的儲存架構），見 `PHASE1_NOTES.md` §八。`frontend/` 尚未開始 |
+| `api/` | 全部 9 支契約端點完成：`POST /api/applicants`、`/verify`、`id-card/rectify`、`sms/send`、`sms/verify`、`account-setup`、`reset`、`admin/login`、`admin/records`、`admin/records/{id}`（含真的接 PostgreSQL）。申請人端用 `X-Session-Id` header，後台端用 `Authorization: Bearer <token>`，兩套機制不要搞混，細節見 `PHASE1_NOTES.md` §七。CORS 已開放（開發階段 `allow_origins=["*"]`，正式環境要改成前端實際網域）。23 秒驗證影片已做**象徵性本機保存**（只有走完整條管線的紀錄才留，不是合規等級的儲存架構），見 `PHASE1_NOTES.md` §八 |
+| `frontend/` | Vite + React 19，涵蓋申請人六步驟流程與後台儀表板，已串接真實後端 API（後台登入/查詢、簡訊驗證、基本資料、帳戶設定、證件拍照矯正、人臉驗證錄影上傳）。**人臉驗證錄影功能無法在開發環境用瀏覽器自動化測試相機**，邏輯正確性靠直接呼叫後端 API 驗證，實際錄影行為（尤其 fps 是否跟宣告值一致）待真人測試確認，見 `PHASE1_NOTES.md` 階段三紀錄 §四 |
 | `track1_synthetic/`、`vlm_summary/` | A 負責，目前放了 B 的佔位版本讓系統能先跑通 |
 
 ### 2026-08-19：五層改用連續信心分數

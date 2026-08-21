@@ -9,6 +9,13 @@
       "port": 3000
     },
     {
+      "name": "guardframe-frontend-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview", "--", "--port", "4173"],
+      "cwd": "frontend",
+      "port": 4173
+    },
+    {
       "name": "guardframe-backend",
       "runtimeExecutable": "venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "uvicorn", "api.main:app", "--port", "8000"],

@@ -19,9 +19,21 @@ export const FaceVerifyScreen: React.FC<FaceVerifyScreenProps> = ({
       faceVerified: true,
       faceConfidence: confidence,
       photometricPassed: photometricPassed,
-      photometricScore: 99.6,
+      photometricScore: confidence,
     });
   };
+
+  // basic_info 那一步才會真的建立 applicant + session（見
+  // api/onboarding.ts 的說明），理論上走到這一步一定已經有了；
+  // 防禦性地擋一下，避免使用者用網址跳過前面步驟直接進到這裡。
+  if (!formData.applicantId || !formData.sessionId) {
+    return (
+      <div className="flex flex-col flex-1 items-center justify-center px-6 py-10 text-center bg-white">
+        <p className="text-sm font-bold text-rose-600">找不到申請資料</p>
+        <p className="text-xs text-slate-500 mt-1">請先完成「確認個人資料」步驟後再回來這裡。</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col flex-1 px-4 pt-2 pb-8 bg-white select-none">
@@ -42,6 +54,8 @@ export const FaceVerifyScreen: React.FC<FaceVerifyScreenProps> = ({
       {/* Primary Camera-first Viewport */}
       <div className="w-full flex-1 flex flex-col items-center justify-center">
         <FaceVerificationEngine
+          applicantId={formData.applicantId}
+          sessionId={formData.sessionId}
           onVerificationComplete={handleVerificationComplete}
           onProceedNext={onNext}
           isDesktop={false}

@@ -17,6 +17,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { rectifyIdCard } from '../../../api/client';
 
 interface DesktopIdUploadProps {
   formData: FormData;
@@ -42,10 +43,13 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
   const [cameraSide, setCameraSide] = useState<IdCardSide>('front');
   const [isCardAligned, setIsCardAligned] = useState<boolean>(false);
   const [ocrStatus, setOcrStatus] = useState<'idle' | 'scanning' | 'success' | 'failed'>('idle');
+  const [rectifyStatus, setRectifyStatus] = useState<'idle' | 'capturing' | 'failed'>('idle');
+  const [rectifyError, setRectifyError] = useState<string>('');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     let timer: any;
@@ -89,34 +93,58 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
     setIsCameraOpen(false);
   };
 
-  const handleSnapPhoto = () => {
-    stopCamera();
-    if (cameraSide === 'front') {
-      setFrontCaptured(true);
-      const url = '/id-card-sample.jpg';
-      setFrontImage(url);
-      triggerOcrRecognition('front', url);
-    } else {
-      setBackCaptured(true);
-      const url = '/id-card-sample-back.jpg';
-      setBackImage(url);
-      triggerOcrRecognition('back', url);
+  const captureVideoFrameAsBlob = (): Promise<Blob | null> => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.videoWidth === 0) return Promise.resolve(null);
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return Promise.resolve(null);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.92));
+  };
+
+  const runRectify = async (side: IdCardSide, blob: Blob) => {
+    setRectifyStatus('capturing');
+    setRectifyError('');
+    try {
+      const result = await rectifyIdCard(blob);
+      if (!result.success || !result.rectified) {
+        setRectifyStatus('failed');
+        setRectifyError(result.message || '未偵測到證件邊界，請重新拍攝');
+        return;
+      }
+      setRectifyStatus('idle');
+      if (side === 'front') {
+        setFrontCaptured(true);
+        setFrontImage(result.rectified);
+      } else {
+        setBackCaptured(true);
+        setBackImage(result.rectified);
+      }
+      triggerOcrRecognition(side, result.rectified);
+    } catch (err) {
+      setRectifyStatus('failed');
+      setRectifyError('無法連線到後端伺服器，請確認伺服器是否已啟動');
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSnapPhoto = async () => {
+    const blob = await captureVideoFrameAsBlob();
+    stopCamera();
+    if (!blob) {
+      setRectifyStatus('failed');
+      setRectifyError('無法擷取相機畫面，請重新開啟相機');
+      return;
+    }
+    await runRectify(cameraSide, blob);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const url = URL.createObjectURL(file);
-      if (activeSide === 'front') {
-        setFrontCaptured(true);
-        setFrontImage(url);
-        triggerOcrRecognition('front', url);
-      } else {
-        setBackCaptured(true);
-        setBackImage(url);
-        triggerOcrRecognition('back', url);
-      }
+      await runRectify(activeSide, file);
     }
   };
 
@@ -175,6 +203,19 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
             請分別完成中華民國國民身分證「正面」與「反面」之拍攝或上傳。
           </p>
         </div>
+
+        {rectifyStatus === 'capturing' && (
+          <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs font-semibold text-sky-700 flex items-center gap-2">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            <span>正在偵測證件邊界…</span>
+          </div>
+        )}
+        {rectifyStatus === 'failed' && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>{rectifyError}</span>
+          </div>
+        )}
 
         {/* 2-Column Side by Side Layout for Desktop */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -348,6 +389,7 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
           onChange={handleFileUpload}
           className="hidden"
         />
+        <canvas ref={canvasRef} className="hidden" />
 
         {/* Footer Next Button */}
         <div className="pt-4 border-t border-slate-100 flex items-center justify-between">

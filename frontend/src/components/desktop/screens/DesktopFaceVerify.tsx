@@ -34,17 +34,28 @@ export const DesktopFaceVerify: React.FC<DesktopFaceVerifyProps> = ({
       faceVerified: true,
       faceConfidence: confidence,
       photometricPassed: photometricPassed,
-      photometricScore: 99.6,
+      photometricScore: confidence,
     });
   };
 
+  // 2026-08-20：原本這裡是固定寫死「01 向左轉頭 → 02 揮手 → 03 眨眼 →
+  // 04 向右轉頭」，但實際順序現在是伺服器隨機指派（見
+  // FaceVerificationEngine 裡的 challenge-order 串接），寫死的列表會
+  // 誤導使用者以為順序永遠一樣。這裡改成通用說明，不再列出假的固定
+  // 順序；真正的順序會直接顯示在鏡頭畫面裡（跟 mobile 版行為一致）。
   const actionMilestones = [
-    { num: '01', title: '向左轉頭', desc: '依畫面箭頭向左轉動臉部 (5 秒)', icon: ArrowLeft },
-    { num: '02', title: '臉前揮手', desc: '在臉部前方左右自然揮手至少 2 次 (5 秒)', icon: Hand },
-    { num: '03', title: '自然眨眼', desc: '自然眨眼 1~2 次確認動態特徵 (3 秒)', icon: Eye },
-    { num: '04', title: '向右轉頭', desc: '依畫面箭頭向右轉動臉部 (5 秒)', icon: ArrowRight },
-    { num: '05', title: '照明響應', desc: '保持不動進行環境光學響應 (5 秒)', icon: SunMedium },
+    { title: '4 個動作指令', desc: '眨眼、左轉、右轉、揮手，每次順序皆為系統隨機指派', icon: ScanFace },
+    { title: '照明響應', desc: '保持不動，螢幕會顯示一段隨機顏色序列', icon: SunMedium },
   ];
+
+  if (!formData.applicantId || !formData.sessionId) {
+    return (
+      <div className="flex flex-col flex-1 items-center justify-center py-16 text-center">
+        <p className="text-sm font-bold text-rose-600">找不到申請資料</p>
+        <p className="text-xs text-slate-500 mt-1">請先完成「確認個人資料」步驟後再回來這裡。</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col justify-between h-full space-y-6">
@@ -73,6 +84,8 @@ export const DesktopFaceVerify: React.FC<DesktopFaceVerifyProps> = ({
         {/* Left: Large In-Camera Viewfinder (7 cols) */}
         <div className="lg:col-span-7 flex flex-col items-center">
           <FaceVerificationEngine
+            applicantId={formData.applicantId}
+            sessionId={formData.sessionId}
             onVerificationComplete={handleVerificationComplete}
             onProceedNext={onNext}
             isDesktop={true}
@@ -108,10 +121,7 @@ export const DesktopFaceVerify: React.FC<DesktopFaceVerifyProps> = ({
                         <Icon className="h-4 w-4" />
                       </div>
                       <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] font-bold text-slate-400">{item.num}</span>
-                          <h4 className="text-xs font-bold text-slate-800">{item.title}</h4>
-                        </div>
+                        <h4 className="text-xs font-bold text-slate-800">{item.title}</h4>
                         <p className="text-[11px] text-slate-400">{item.desc}</p>
                       </div>
                     </div>
