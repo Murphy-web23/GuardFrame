@@ -19,12 +19,17 @@ export const FaceVerifyScreen: React.FC<FaceVerifyScreenProps> = ({
   // （見 PhotometricConsentNotice.tsx 頂部的說明）。
   const [hasAcknowledged, setHasAcknowledged] = useState(false);
 
-  const handleVerificationComplete = (confidence: number, photometricPassed = true) => {
+  const handleVerificationComplete = (
+    confidence: number,
+    photometricPassed = true,
+    verdict: 'pass' | 'review' = 'pass'
+  ) => {
     updateFormData({
       faceVerified: true,
       faceConfidence: confidence,
       photometricPassed: photometricPassed,
       photometricScore: confidence,
+      verificationVerdict: verdict,
     });
   };
 

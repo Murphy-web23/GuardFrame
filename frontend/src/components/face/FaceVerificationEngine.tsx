@@ -98,7 +98,11 @@ export const CHALLENGE_MAP: Record<ChallengeType, ChallengeConfig> = {
 interface FaceVerificationEngineProps {
   applicantId: number;
   sessionId: string;
-  onVerificationComplete: (confidence: number, photometricPassed?: boolean) => void;
+  onVerificationComplete: (
+    confidence: number,
+    photometricPassed?: boolean,
+    verdict?: 'pass' | 'review'
+  ) => void;
   onProceedNext: () => void;
   isDesktop?: boolean;
 }
@@ -147,6 +151,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
   // Camera feed states
   const [cameraActive, setCameraActive] = useState<boolean>(false);
+  // 2026-08-22：真人測試發現，「重新錄製」重啟攝影機後如果馬上就能按
+  // 「開始驗證」，鏡頭的自動對焦/曝光還沒穩定，錄出來的畫面容易模糊
+  // （blurScore 不合格）。給一段短暫的「鏡頭準備中」緩衝時間，讓自動
+  // 對焦先穩定下來，見 startCamera() 裡的說明。
+  const [cameraWarmingUp, setCameraWarmingUp] = useState<boolean>(false);
   const [useSimulatedFeed, setUseSimulatedFeed] = useState<boolean>(false);
   const [cameraErrorMsg, setCameraErrorMsg] = useState<string | null>(null);
 
@@ -167,6 +176,7 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
   }>({ boundaries: [], actionPhaseEndMs: 0, lightLog: null, totalMs: 0 });
   const [verifyError, setVerifyError] = useState<string>('');
   const [decisionSummary, setDecisionSummary] = useState<{
+    verdict: 'pass' | 'review' | 'reject';
     verdictLabel: string;
     riskScore: number;
     reasons: string[];
@@ -371,6 +381,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
             console.log('Autoplay handled', playErr);
           }
         }
+
+        // 讓畫面先顯示出來（上面已經 setCameraActive），但「開始驗證」
+        // 按鈕多等一下再解鎖，給自動對焦/曝光時間穩定。
+        setCameraWarmingUp(true);
+        setTimeout(() => setCameraWarmingUp(false), 1500);
       } else {
         throw new Error('瀏覽器不支援相機 API');
       }
@@ -564,20 +579,30 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         if (cancelled) return;
 
         setDecisionSummary({
+          verdict: record.decision.verdict,
           verdictLabel: record.decision.verdictLabel,
           riskScore: record.decision.riskScore,
           reasons: record.decision.reasons,
         });
 
-        if (record.decision.verdict === 'pass') {
+        // 2026-08-22：review（人工複核）不是拒絕，是「不確定、交給人工
+        // 看」——不該跟 reject 一樣擋在這裡逼使用者重錄。讓 review 也
+        // 繼續往下走，只是標記案件狀態，account_setup／完成畫面會顯示
+        // 「審核中」而不是「已通過」。真正的 reject 才留在下面 else
+        // 分支，顯示錯誤畫面。
+        if (record.decision.verdict === 'pass' || record.decision.verdict === 'review') {
           setOverallStage('success');
           setTotalSecondsRemaining(0);
-          speakPrompt('身分驗證完成。', 'verification_success');
+          speakPrompt(
+            record.decision.verdict === 'pass' ? '身分驗證完成。' : '身分驗證已送出，案件將由人工複核。',
+            'verification_success'
+          );
           // riskScore 是 0-100、越低越可信；換算成既有 UI 欄位
           // （faceConfidence）用的「信心分數」，方向跟原本假資料一致。
           onVerificationComplete(
             100 - record.decision.riskScore,
-            record.photometric.confidenceScore < 0.5
+            record.photometric.confidenceScore < 0.5,
+            record.decision.verdict
           );
         } else {
           setOverallStage('error');
@@ -730,7 +755,12 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         {/* TRACK 3: 真的螢幕燈光顏色序列——顯示的顏色/切換時機就是實際
             寫進 light_log 上傳給後端的那組資料，不是裝飾動畫。這裡故意
             用高不透明度：Track 3 要靠反射到臉上的光夠亮才量得到訊號，
-            原本那個柔和的半透明效果只是視覺演出，量不到真的反射。 */}
+            原本那個柔和的半透明效果只是視覺演出，量不到真的反射。
+            2026-08-23：試過改成 `fixed inset-0` 填滿整個瀏覽器視窗
+            （猜測擴大發光面積能提高 correlation），真人測試兩筆的
+            correlation（0.194、0.269）反而都比改之前的最佳值（0.523）
+            差，證據指向反效果，改回原本只填滿鏡頭預覽框的版本。根因
+            還沒查清楚，見 PHASE1_NOTES.md §10.14 後續。 */}
         {overallStage === 'track3_photometric' &&
           timelineRef.current.lightLog &&
           (() => {
@@ -1113,6 +1143,8 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                     ? '正在向伺服器取得本次驗證的動作順序…'
                     : orderError
                     ? orderError
+                    : cameraWarmingUp
+                    ? '鏡頭準備中，正在校正對焦與曝光…'
                     : '共 4 項動作與照明響應，請依語音提示操作。'}
                 </p>
               </div>
@@ -1121,11 +1153,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                 id="start-face-verify-btn"
                 type="button"
                 onClick={handleStartVerification}
-                disabled={orderLoading || !!orderError}
+                disabled={orderLoading || !!orderError || cameraWarmingUp}
                 className="w-full py-3.5 rounded-2xl bg-sky-500 hover:bg-sky-400 active:scale-[0.99] text-white font-bold text-sm shadow-lg shadow-sky-500/30 flex items-center justify-center gap-2 cursor-pointer transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Play className="h-4 w-4 fill-white" />
-                <span>{orderLoading ? '準備中…' : '開始動態驗證'}</span>
+                <span>{orderLoading ? '準備中…' : cameraWarmingUp ? '鏡頭準備中…' : '開始動態驗證'}</span>
               </button>
             </motion.div>
           )}
@@ -1164,16 +1196,32 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                 <CheckCircle2 className="h-8 w-8" />
               </div>
 
-              <div>
-                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300 bg-emerald-950/80 px-3.5 py-1 rounded-full border border-emerald-400/30">
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span>身分核驗通過</span>
-                </span>
-                <h4 className="text-lg font-black text-white mt-2.5">身分驗證完成</h4>
-                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  已確認為您本人辦理，動作核驗與照明響應已全數通過。
-                </p>
-              </div>
+              {/* 2026-08-22：review（人工複核）跟 pass 都會走到這個
+                  success 畫面（見上面 processing effect 的說明），
+                  文案要分開，不能讓 review 的使用者誤以為已經核准。 */}
+              {decisionSummary?.verdict === 'review' ? (
+                <div>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 bg-amber-950/80 px-3.5 py-1 rounded-full border border-amber-400/30">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span>案件已受理，待人工複核</span>
+                  </span>
+                  <h4 className="text-lg font-black text-white mt-2.5">驗證資料已送出</h4>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    系統判定本次驗證需要人工複核，您可以繼續完成申請，審核結果將另行通知。
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300 bg-emerald-950/80 px-3.5 py-1 rounded-full border border-emerald-400/30">
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span>身分核驗通過</span>
+                  </span>
+                  <h4 className="text-lg font-black text-white mt-2.5">身分驗證完成</h4>
+                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                    已確認為您本人辦理，動作核驗與照明響應已全數通過。
+                  </p>
+                </div>
+              )}
 
               <button
                 id="face-verify-success-next-btn"
@@ -1222,6 +1270,14 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                   setVerifyError('');
                   setDecisionSummary(null);
                   setOverallStage('ready');
+                  // 2026-08-21：原本只重置畫面狀態，沒有重新跟攝影機要一次
+                  // 串流——同一個 MediaStream 會一路沿用到底，如果錄影
+                  // 環境中途變了（例如重新打光），攝影機的自動曝光/白平衡
+                  // 不一定會即時大幅重新校正。改成重新錄製時也重新啟動
+                  // 攝影機，讓它有機會針對當下環境重新協商曝光參數。
+                  if (!useSimulatedFeed) {
+                    startCamera();
+                  }
                 }}
                 className="w-full py-3.5 rounded-2xl bg-white/10 hover:bg-white/20 active:scale-[0.99] text-white font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all border border-white/10"
               >

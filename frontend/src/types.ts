@@ -57,6 +57,10 @@ export interface FormData {
   faceConfidence: number;
   photometricPassed?: boolean;
   photometricScore?: number;
+  // 2026-08-22：verdict === 'review' 現在也能繼續送出申請（不是直接
+  // 擋下來當失敗），案件標記為待人工複核。這個欄位讓後面步驟（例如
+  // CompletedScreen）知道要顯示「審核中」還是一般的完成訊息。
+  verificationVerdict?: 'pass' | 'review';
   
   // Step 5: Feature Selection, Terms & Submission
   cardStyle: 'style_a' | 'style_b';

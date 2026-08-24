@@ -46,14 +46,19 @@ export const CompletedScreen: React.FC<CompletedScreenProps> = ({
           </div>
         </motion.div>
 
+        {/* 2026-08-22：verdict === 'review' 的案件也會走到這個完成畫面
+            （不再被當成失敗擋下來），但文案要誠實反映「還在人工複核」，
+            不能讓使用者誤以為已經核准。 */}
         <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 mb-1.5">
-          申請案件已送出
+          {formData.verificationVerdict === 'review' ? '申請案件已受理，待人工複核' : '申請案件已送出'}
         </span>
         <h1 className="text-xl font-black text-slate-900 tracking-tight">
-          開戶申請已完成送審
+          {formData.verificationVerdict === 'review' ? '開戶申請已送出，正在人工複核' : '開戶申請已完成送審'}
         </h1>
         <p className="text-xs text-slate-500 mt-1 max-w-xs leading-relaxed">
-          感謝您的申請！我們已收到您的完整資料，審核結果將透過簡訊與 Email 第一時間通知您。
+          {formData.verificationVerdict === 'review'
+            ? '感謝您的申請！本次人臉驗證系統判定需要人工複核，我們已收到您的完整資料，複核結果將透過簡訊與 Email 第一時間通知您。'
+            : '感謝您的申請！我們已收到您的完整資料，審核結果將透過簡訊與 Email 第一時間通知您。'}
         </p>
       </div>
 

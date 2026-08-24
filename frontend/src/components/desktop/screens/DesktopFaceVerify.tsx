@@ -32,12 +32,17 @@ export const DesktopFaceVerify: React.FC<DesktopFaceVerifyProps> = ({
 }) => {
   const [hasAcknowledged, setHasAcknowledged] = useState(false);
 
-  const handleVerificationComplete = (confidence: number, photometricPassed = true) => {
+  const handleVerificationComplete = (
+    confidence: number,
+    photometricPassed = true,
+    verdict: 'pass' | 'review' = 'pass'
+  ) => {
     updateFormData({
       faceVerified: true,
       faceConfidence: confidence,
       photometricPassed: photometricPassed,
       photometricScore: confidence,
+      verificationVerdict: verdict,
     });
   };
 
