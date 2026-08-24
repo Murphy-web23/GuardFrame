@@ -60,7 +60,14 @@ router = APIRouter(prefix="/api")
 
 _ACCOUNT_RESULT_BY_VERDICT = {
     "pass": "pending_setup",
-    "review": "pending",
+    # 2026-08-23：原本 review 對應 "pending"，setup_account() 只認
+    # "pending_setup"，導致人工複核案件連交易密碼都設不了、卡在帳戶
+    # 設定這步。跟夥伴確認過，review 不是拒絕，應該讓使用者先把帳戶
+    # 設定走完（複核通過就不用再回來重填一次資料），改成跟 pass 一樣
+    # 導向 "pending_setup"。verdict 欄位本身還是分開存在
+    # VerificationRecordRow 上，後台要分辨「哪些已開戶帳號其實是
+    # review 案件、還需要人工確認」，看 verdict 就好，不會遺失資訊。
+    "review": "pending_setup",
     "reject": "rejected",
 }
 
