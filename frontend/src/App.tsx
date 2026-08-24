@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { OnboardingStep, FormData } from './types';
-import { DeviceSimulator, ViewMode } from './components/DeviceSimulator';
+import { DeviceSimulator } from './components/DeviceSimulator';
 import { MobileLayout } from './components/mobile/MobileLayout';
 import { DesktopLayout } from './components/desktop/DesktopLayout';
 
@@ -65,7 +65,6 @@ export default function App() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => getStoredAuth());
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('welcome');
   const [formData, setFormData] = useState<FormData>(initialFormData);
-  const [viewMode, setViewMode] = useState<ViewMode>('auto');
 
   // Listen to URL Hash changes for direct link navigation (#admin or #user)
   useEffect(() => {
@@ -319,32 +318,17 @@ export default function App() {
     <div className="w-full min-h-screen bg-slate-900 flex flex-col font-sans">
       {/* Primary Simulator & Layout Switcher */}
       {appMode === 'user_onboarding' ? (
-        <DeviceSimulator
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-          currentStep={currentStep}
-          formData={formData}
-          appMode={appMode}
-          onSwitchToAdmin={() => {
-            window.location.hash = '#admin';
-            setAppMode('admin');
-          }}
-        >
-          {viewMode === 'mobile' ? (
-            renderMobileContent()
-          ) : viewMode === 'desktop' ? (
-            renderDesktopContent()
-          ) : (
-            <>
-              {/* Responsive Auto Layout: Mobile on small screens, Desktop on md+ */}
-              <div className="block md:hidden w-full flex-1 flex flex-col">
-                {renderMobileContent()}
-              </div>
-              <div className="hidden md:flex w-full flex-1 flex-col">
-                {renderDesktopContent()}
-              </div>
-            </>
-          )}
+        <DeviceSimulator>
+          {/* 真正的響應式分流：CSS breakpoint 決定顯示哪一組畫面，
+              不是 JS 手動切換。後台入口只能透過網址 #admin 進入，
+              見上面的 hashchange 監聽，使用者畫面裡不會出現任何
+              後台相關的按鈕或提示。 */}
+          <div className="block md:hidden w-full flex-1 flex flex-col">
+            {renderMobileContent()}
+          </div>
+          <div className="hidden md:flex w-full flex-1 flex-col">
+            {renderDesktopContent()}
+          </div>
         </DeviceSimulator>
       ) : (
         /* Admin Mode */
