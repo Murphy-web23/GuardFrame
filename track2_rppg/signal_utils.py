@@ -185,6 +185,7 @@ def estimate_heart_rate(
 
     band_idx = np.flatnonzero(band)
     peak_idx = band_idx[np.argmax(psd[band])]
+    peak_idx = _prefer_fundamental_over_harmonic(freqs, psd, band, peak_idx, low)
 
     peak_freq = _refine_peak(freqs, psd, peak_idx)
     snr = _band_snr(freqs, psd, peak_freq, low, high)
@@ -224,6 +225,52 @@ def _band_snr(freqs, psd, peak_freq, low, high):
         return 0.0
 
     return float(10.0 * np.log10(signal_power / noise_power))
+
+
+def _prefer_fundamental_over_harmonic(freqs, psd, band, peak_idx, low):
+    """如果目前選到的峰值很可能是真正基頻的二次諧波，改選較低頻那個。
+
+    2026-08-22：真人測試發現的問題——心跳波形不是純正弦（收縮期陡、
+    舒張期緩），二次諧波本來就帶有真實的生理能量（`_band_snr()` 的
+    docstring 也是這樣算 SNR 的）。單純取頻帶內功率最大值當主頻，沒有
+    排除「雜訊/動作干擾讓諧波那格功率反超基頻」這種狀況，會估出剛好
+    兩倍的心率。真人樣本裡，額頭/左臉頰估出 110+ bpm、右臉頰估出
+    55 bpm，前兩者剛好是後者的兩倍，就是誤選到諧波的典型模式。
+
+    做法：檢查目前峰值頻率的一半是否還落在合法頻帶內，附近有沒有一個
+    功率不算太低的候選峰值（達到 config.RPPG_HARMONIC_DEMOTE_RATIO
+    這個比例）——如果有，代表基頻訊號其實還在、只是被諧波蓋過去，
+    改採這個較低頻的峰值。
+
+    參數:
+        freqs, psd: welch() 的輸出
+        band: bool 陣列，跟 freqs 同長度，標出合法搜尋頻帶
+        peak_idx: int，目前選到（頻帶內全域最大值）的索引
+        low: float，頻帶下界（Hz）
+
+    回傳:
+        int，最終採用的峰值索引（可能跟輸入的 peak_idx 相同）
+    """
+    half_freq = freqs[peak_idx] / 2.0
+    if half_freq < low:
+        return peak_idx
+
+    width = config.RPPG_SNR_HARMONIC_WIDTH
+    sub_mask = band & (np.abs(freqs - half_freq) <= width)
+    if not np.any(sub_mask):
+        return peak_idx
+
+    sub_band_idx = np.flatnonzero(sub_mask)
+    sub_peak_idx = sub_band_idx[np.argmax(psd[sub_mask])]
+
+    peak_power = psd[peak_idx]
+    if peak_power <= 0:
+        return peak_idx
+
+    if psd[sub_peak_idx] / peak_power >= config.RPPG_HARMONIC_DEMOTE_RATIO:
+        return sub_peak_idx
+
+    return peak_idx
 
 
 def _refine_peak(freqs, psd, peak_idx):
