@@ -40,11 +40,30 @@ SYNTHETIC_THRESHOLD = 0.50
 # Track 2
 RPPG_BAND_LOW = 0.7  # Hz，約 42 bpm
 RPPG_BAND_HIGH = 4.0  # Hz，約 240 bpm
+# 2026-08-23：累積到這裡已經有 7 筆真人樣本的 SNR（-4.49 ~ -0.17dB，
+# 修完 10.11 的諧波誤判後多筆集中在 -0.2 ~ -0.4dB），從沒到過原本的
+# 3.0dB，落差是系統性的，不是單一樣本的偶然。試過把門檻壓到 -4.0dB
+# 跟 0.0dB，兩個都會讓測試案例裡「訊號良好」（6dB）跟「訊號普通」
+# （3dB）的風險分數變成完全相同——算過數學才發現原因：這個測試情境
+# 裡，roiConsistency 那個子項目的固定風險值剛好蓋過 SNR 本身在低門檻
+# 時的差異（combine_risks 取最大值，SNR 風險只要低於那個固定值就會
+# 被蓋掉不會顯現），不管 SNR 門檻怎麼調，沒辦法同時「讓真人受益」又
+# 「保留測試分辨力」，中間沒有安全區間。改回原始值，這個問題不是
+# 換數字能解決的，需要更根本的調查（例如 roiConsistency 那個子項目
+# 本身的 scale 是不是也一起設計得太粗），見 PHASE1_NOTES.md。
 RPPG_SNR_MIN = 3.0  # dB
 RPPG_ROI_CONSISTENCY_MIN = 0.75
 
 # Track 3
-PHOTO_CORRELATION_MIN = 0.60
+# 2026-08-23：累積到這裡已經有 5 筆真人樣本的 correlation（0.114 ~
+# 0.523），從沒到過原本的 0.60，但都在 0.35 以上的範圍有一半以上
+# 樣本。08-21 量過「完全跟燈光無關的純雜訊」correlation 是 0.189，
+# 這裡改到 0.35——比雜訊的 0.189 高出足夠的安全邊際（correlation_ok
+# 這個布林判定的門檻，雜訊 0.189 < 0.35 一樣會被擋下來，見
+# track3_photometric/analyzer.py:219），同時真人最好的樣本（0.523）
+# 已經能明顯降低風險分數。樣本數還是有限，之後有更多真人資料應該
+# 再檢視。
+PHOTO_CORRELATION_MIN = 0.35
 PHOTO_LATENCY_MAX_MS = 80
 PHOTO_GEOMETRY_MIN = 0.50
 PHOTO_SEGMENT_COUNT = 5
@@ -53,7 +72,13 @@ PHOTO_SEGMENT_MAX_MS = 600
 
 # Track 4
 OCC_IDENTITY_STABILITY_MIN = 0.90
-OCC_MAX_DROP_THRESHOLD = 0.20
+# 2026-08-21：原本 0.20，真人測試（真的揮手遮擋）實測 maxIdentityDrop
+# 高達 0.904，跟 README 記錄過的「對手部部分遮擋過度敏感」問題吻合。
+# 這裡刻意只調到 0.95、不是更寬鬆的 1.0——Track 4 是五層裡權重最高
+# （0.35）、專案定位的核心防禦層，調太鬆等於讓這個核心機制形同虛設。
+# 只有一筆真實資料，這個調整比其他兩個保守，之後有更多樣本（尤其是
+# 真的身分置換攻擊的樣本）應該優先重新檢視這個門檻。
+OCC_MAX_DROP_THRESHOLD = 0.95
 OCC_LAYER_SCORE_MIN = 0.50
 
 # 五層權重（Track 4 為核心防禦層，權重最高；實測後於階段4依 ROC 校準微調）
@@ -64,8 +89,20 @@ WEIGHT_PHOTOMETRIC = 0.20
 WEIGHT_OCCLUSION = 0.35
 
 # 決策區間
-RISK_PASS_MAX = 30
-RISK_REVIEW_MAX = 60
+# 2026-08-21：原本 PASS_MAX=30、REVIEW_MAX=60，是 CONVENTIONS.md §8
+# 訂的初始猜測值，本來就標記等真實資料 ROC 校準。試過把兩個門檻都
+# 放寬 25%（PASS_MAX→38、REVIEW_MAX→75），發現兩個問題：(1)
+# REVIEW_MAX 放到 75 會把 test_fusion.py 裡「即時換臉攻擊」情境測試
+# （risk_score=69）從「拒絕」推進「人工複核」——這是驗證「只有
+# Track 4 抓得到即時換臉」這個論點的關鍵測試，不能鬆動；(2) 真人測試
+# （申請人 344）risk_score=52，原本 REVIEW_MAX=60 就已經落在
+# review 區間，放寬 REVIEW_MAX 對這筆真實案例根本沒有幫助。所以
+# REVIEW_MAX 改回原始值。PASS_MAX 放寬到 38 沒有破壞任何測試，先保留，
+# 但對目前這筆真人案例（52 分）也沒有實際幫助——risk_score 51 分還是
+# 落在人工複核區間，不是「調門檻」能解決的，根因還是在 Track 2/3
+# 訊號品質，見上面對應章節。
+RISK_PASS_MAX = 38  # 原本 30，30 * 1.25 = 37.5 取整數；沒破壞任何測試，保留
+RISK_REVIEW_MAX = 60  # 原本 60，試過放寬到 75 但會弱化核心攻擊情境測試，改回原值
 
 # 密碼雜湊（NFR-15）
 BCRYPT_ROUNDS = 12
@@ -105,6 +142,16 @@ RPPG_CONSISTENCY_RISK_SCALE = 0.15
 # 算 SNR 時把「主峰 ±此值」與「二次諧波 ±此值」視為訊號，帶內其餘視為雜訊。
 # 心跳波形不是純正弦，二次諧波帶有真實的生理能量，要算進訊號側。
 RPPG_SNR_HARMONIC_WIDTH = 0.1
+
+# 2026-08-22：真人測試發現，estimate_heart_rate() 原本單純取頻帶內功率
+# 最大值當主頻，沒有排除「抓到二次諧波」的狀況——心跳波形不是純正弦
+# （收縮期陡、舒張期緩），二次諧波本來就有真實能量，雜訊/動作干擾一多，
+# 諧波那格功率有機會反超真正的基頻，估出來的心率剛好是真實值的兩倍。
+# 真人樣本額頭/左臉頰估出 110+ bpm、右臉頰估出 55 bpm 就是這個模式。
+# 這個比例是「半頻附近候選峰值功率 ÷ 目前選到的峰值功率」要達到多少，
+# 才改採較低頻的那個當真正基頻——先用尚未經過大量真實資料調校的合理
+# 猜測值，之後有更多真人樣本應該重新檢視。
+RPPG_HARMONIC_DEMOTE_RATIO = 0.3
 
 # MediaPipe Face Landmarker 模型檔
 # MediaPipe 1.0.0 移除了舊的 mp.solutions API，改用 Tasks API，
