@@ -40,9 +40,21 @@ export const SmsVerifyScreen: React.FC<SmsVerifyScreenProps> = ({
   };
 
   // Demo user quick select
+  // 2026-08-22：原本只填手機號碼欄位本身，沒有寫進共用的 formData，
+  // 導致後面「確認個人資料」步驟自己的示範資料選單如果選了不同一組，
+  // 姓名/身分證/生日等資料會跟這裡實際送出驗證的手機號碼對不上。這裡
+  // 直接把整組示範資料寫進 formData，讓後面步驟預設帶出同一組人，
+  // 不用重選（使用者仍然可以在後面步驟自己改）。
   const handleSelectDemoUser = (user: DemoUser) => {
     setPhoneInput(user.phone);
     setPhoneError('');
+    updateFormData({
+      fullName: user.fullName,
+      idNumber: user.idNumber,
+      birthday: user.birthday,
+      email: user.email,
+      address: user.address,
+    });
   };
 
   // Handle digit inputs
