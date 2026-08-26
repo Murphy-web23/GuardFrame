@@ -26,10 +26,23 @@ track1_synthetic/weights/
 
 # 內部文件，不公開
 # 用萬用字元，改檔名時才不會不小心漏掉而被推上去
-CONVENTIONS*.md
 PLAN*.md
 PHASE*_NOTES.md
+
+# 跨隊釐清／規劃往返文件（GF_ 開頭），屬兩邊 AI 討論過程的產物，
+# 不是團隊共用的正式規格，不進 git
+GF_*.md
 
 # 後台帳號初始化腳本，§8.1 明文規定不進 git（本身不含密碼，但屬於
 # 「僅本機執行一次」的一次性工具，不是給團隊共用的程式碼）
 scripts/init_admin.py
+
+# 01-06（BRD/PRD/BDD/SRS/SAD/SDS）與 CONVENTIONS.md 已改為公開進 git
+# （2026-08-26 起）。07 前端 API 整合規格書、08 使用者旅程文件等其餘
+# 內部文件維持不公開，用萬用字元避免之後新增同編號的漏擋
+0[7-9]_*.md
+
+# requirements.txt 才是團隊共用的依賴清單，這兩個是 B 本機額外的
+# 版本快照，不是給團隊共用的
+requirements_B.txt
+requirements_locked.txt
