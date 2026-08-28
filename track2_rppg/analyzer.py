@@ -89,17 +89,18 @@ def _analyze_single_roi(roi_signal, fps):
     回傳:
         dict 或 None（訊號不可用時）
     """
-    # 只取綠通道。綠光被血紅素吸收最多，心跳訊號在三個通道裡最明顯；
-    # 紅光穿透深、受深層組織干擾，藍光訊噪比差。
-    green = roi_signal[:, 1]
-
-    if np.isnan(green).all():
+    # 2026-08-26：原本只取綠通道（血紅素吸收最多，訊號最明顯），但
+    # 單一通道對動作/光線雜訊很敏感，實測下來真人跟假影片的 SNR
+    # 幾乎沒有區分度。改用 POS 演算法，同時用三個通道並透過投影
+    # 公式抵銷掉光照/動作造成的共同雜訊，理論上更 robust。
+    if np.isnan(roi_signal).all():
         return None
 
-    green = su.interpolate_missing(green)
+    rgb = su.interpolate_missing(roi_signal)
+    pulse = su.pos_algorithm(rgb, fps)
 
     try:
-        filtered = su.bandpass_filter(su.detrend_signal(green), fps)
+        filtered = su.bandpass_filter(su.detrend_signal(pulse), fps)
     except ValueError:
         return None
 

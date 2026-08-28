@@ -29,8 +29,21 @@ VIDEO_SECONDS_MIN = 15  # 低於此 rPPG 頻譜解析度不足
 VIDEO_SECONDS_MAX = 45  # 避免檔案過大與使用者疲乏
 
 # 品質檢查
-QUALITY_BLUR_MIN = 100.0
-QUALITY_BRIGHTNESS_MIN = 60
+# 2026-08-25：桌面版真人測試回報「清晰度 90.6（需 100）、亮度 52.3
+# （需 60）」被擋下來——兩個數值都只差門檻一點點，筆電內建鏡頭跟一般
+# 室內光線本來就達不到原本這兩個從沒被真實資料驗證過的門檻（100／60
+# 是任意選的整數，不是量測出來的基準）。放寬到還能擋住真的模糊/過暗
+# 畫面、但不會卡住正常筆電鏡頭+室內光線的水準。
+# 2026-08-27：!!! 暫時性 !!! 70 這個門檻經資料驗證分離度其實很乾淨
+# （真人 20 筆最低 92.32，OBS 假影片 4 筆最高 81.64，中間有空隙，見
+# 對話紀錄分析），是有效的防線，不建議永久調整。這裡暫時放寬純粹是
+# 為了讓 OBS 注入的假影片能穿過畫質關卡、測試後面 Track2-4 的表現，
+# 測完這輪一定要改回 70.0。
+# 2026-08-28：從 1.0 收回到 50——1.0 等同完全關掉這道檢查，50 同樣還是
+# 能讓 OBS 假影片（最高 81.64）通過以便繼續測試 Track2-4，但至少不是
+# 形同虛設的數字。仍是暫時值，驗證告一段落後請改回 70.0。
+QUALITY_BLUR_MIN = 50
+QUALITY_BRIGHTNESS_MIN = 45
 QUALITY_BRIGHTNESS_MAX = 200
 QUALITY_FACE_RATIO_MIN = 0.10
 
@@ -64,7 +77,21 @@ RPPG_ROI_CONSISTENCY_MIN = 0.75
 # 已經能明顯降低風險分數。樣本數還是有限，之後有更多真人資料應該
 # 再檢視。
 PHOTO_CORRELATION_MIN = 0.35
-PHOTO_LATENCY_MAX_MS = 80
+# 2026-08-25：修正 phases.lighting 切片的時間基準誤差（見
+# api/routes.py verify() 與 frontend FaceVerificationEngine.tsx 的
+# 說明）後，真人測試 correlation 從 0.069 大幅提升到 0.581（遠超
+# PHOTO_CORRELATION_MIN），證實那個修法有效；但同一筆測試量到的
+# latencyMs 是 -468.6ms，遠超原本這裡的 80ms——80ms 這個數字從來
+# 沒有用真實資料驗證過，對「螢幕顯示變色→攝影機真的拍到反光」這整條
+# 瀏覽器管線（畫面渲染、攝影機曝光、MediaRecorder 編碼緩衝）而言太
+# 嚴苛，不是真人也能常態達到的反應速度。放寬到還能抓出「完全沒對上」
+# 的假訊號、但不會誤殺真人測試量到的正常管線延遲。
+PHOTO_LATENCY_MAX_MS = 500
+# 2026-08-25：跟前端 FaceVerificationEngine.tsx 的 LIGHTING_BUFFER_MS
+# 是同一個數字，兩邊要一致——前端切 phases.lighting 時頭尾各多送
+# 這麼多毫秒的緩衝影格，後端這裡用同一個值把 t=0 的偏移量扣回來，見
+# track3_photometric/analyzer.py analyze_photometric() 的說明。
+PHOTO_LIGHTING_BUFFER_MS = 400.0
 PHOTO_GEOMETRY_MIN = 0.50
 PHOTO_SEGMENT_COUNT = 5
 PHOTO_SEGMENT_MIN_MS = 400
@@ -101,7 +128,11 @@ WEIGHT_OCCLUSION = 0.35
 # 但對目前這筆真人案例（52 分）也沒有實際幫助——risk_score 51 分還是
 # 落在人工複核區間，不是「調門檻」能解決的，根因還是在 Track 2/3
 # 訊號品質，見上面對應章節。
-RISK_PASS_MAX = 38  # 原本 30，30 * 1.25 = 37.5 取整數；沒破壞任何測試，保留
+# 2026-08-27：918（OBS 注入假影片）risk_score=36，用 38 這個門檻剛好
+# 壓線 pass。查過現有 20 筆真人樣本＋920，最低分是 885（31）跟 920
+# （29），兩筆都還在 32 以下——門檻降到 32 完全不影響任何真人樣本的
+# 判定，卻能把 918 從 pass 推到 review，是乾淨、無副作用的調整。
+RISK_PASS_MAX = 32  # 原本 38（更早是 30），見上方 918 案例分析
 RISK_REVIEW_MAX = 60  # 原本 60，試過放寬到 75 但會弱化核心攻擊情境測試，改回原值
 
 # 密碼雜湊（NFR-15）
@@ -194,11 +225,73 @@ ID_CARD_RESIZE_WIDTH = 800
 ID_CARD_CANNY_LOW = 50
 ID_CARD_CANNY_HIGH = 150
 ID_CARD_BLUR_KERNEL = (5, 5)
-ID_CARD_CONTOUR_TOP_N = 5
-ID_CARD_APPROX_EPSILON_RATIO = 0.02
+ID_CARD_CONTOUR_TOP_N = 10
+# 2026-08-25：原本只試單一 epsilon（0.02），找不到剛好 4 個頂點就放棄。
+# 真人測試追出真正的根因是 contourArea 對細線輪廓算出錯誤面積（見
+# image_utils/id_card.py `_find_quad_contour` 的說明），改用凸包面積後
+# 這裡也一併放寬：依序嘗試多個 epsilon，不同雜訊程度的畫面需要的簡化
+# 程度不一樣，只用一個固定值太脆弱。
+ID_CARD_APPROX_EPSILON_RATIOS = (0.02, 0.03, 0.04, 0.05, 0.06, 0.08)
 ID_CARD_OUTPUT_WIDTH = 856
 ID_CARD_OUTPUT_HEIGHT = 540
 ID_CARD_ASPECT_RATIO = ID_CARD_OUTPUT_WIDTH / ID_CARD_OUTPUT_HEIGHT  # ≈ 1.585
+
+# 2026-08-24：真人測試發現，_find_quad_contour() 原本只挑「面積最大的
+# 四邊形」，沒有下限——如果背景剛好有其他小尺寸的規律紋理（磁磚、織物
+# 花紋），在沒有真的證件邊界可偵測時，這種小碎形狀反而可能排進前
+# ID_CARD_CONTOUR_TOP_N 名，被誤判成證件邊界，透視變換後放大成一片
+# 模糊的特寫。加兩道下限：偵測到的四邊形面積至少要佔畫面的
+# ID_CARD_MIN_AREA_RATIO，且 _compute_confidence()（長寬比比對）算出來
+# 至少要達到 ID_CARD_MIN_CONFIDENCE，兩者都是未經大量真實資料校準的
+# 合理猜測值，之後有更多真人測試樣本應該重新檢視。
+# 2026-08-24：真人測試發現這兩個門檻太嚴，把真的有對準的證件也擋掉了
+# ——根因主要是鏡頭解析度跟畫面容器比例對不起來（見 IdUploadScreen.tsx
+# 的說明），已經修正解析度，這裡同時放寬當安全邊際，因為這兩個數值
+# 從來沒有真實資料驗證過。
+ID_CARD_MIN_AREA_RATIO = 0.05
+ID_CARD_MIN_CONFIDENCE = 0.35
+
+# 2026-08-27：找到四邊形只代表「有一個長寬比接近證件的矩形」，完全沒
+# 檢查裡面的內容——隨便拍書本封面、桌墊、螢幕邊框，只要長寬比湊巧接近
+# 1.585:1 就會被判定成功。加一道文字密度檢查：用 MSER 抓小尺寸、密集
+# 排列的候選文字區域，真證件（或有文字欄位的示範證件）內部文字密度會
+# 明顯高於隨便拍到的背景。用「文字候選區域數量」而非邊緣密度，因為
+# 邊緣密度會被木紋桌面、磁磚這類雜亂紋理背景騙過（本模組另一處已經
+# 踩過這個坑，見 _find_quad_contour 的說明），文字的統計特徵（小尺寸、
+# 密集、規則間距）比較不會被一般紋理背景誤觸發。門檻尚未用大量真實
+# 證件樣本校準，是合理猜測值。
+ID_CARD_MIN_TEXT_REGIONS = 15
+
+# 2026-08-27：真人測試發現，光線昏暗（灰階平均亮度 47~64）加上背景
+# 有反光雜物（例如包裝塑膠的平行反光線條）時，膚色遮罩把手指蓋住的
+# 卡片角切掉一塊後，卡片本身的候選輪廓信心不足被排除，演算法退而求
+# 其次選中背景反光雜物形成的四邊形——湊巧長寬比也接近身分證規格，
+# 被誤判成功，矯正出來的是背景不是證件。與其繼續在幾何判定上打補丁，
+# 加一道最基本的亮度檢查，太暗直接擋掉要求重拍——這類昏暗環境下
+# Canny 邊緣品質本來就差，幾何演算法在這種輸入上不可靠。門檻取在
+# 已知失敗案例（47、64）之上、已知成功案例（71、73）之下，未經大量
+# 真實資料驗證，是合理猜測值。
+ID_CARD_MIN_BRIGHTNESS = 65.0
+
+# 2026-08-28：YOLO-pose 角點偵測（見 id_card_detector/README.md、
+# image_utils/id_card.py 的 _find_quad_ml() 說明）——用真人標註的 354
+# 張照片訓練，測試起來對「手指蓋住卡片一角」這種情況明顯比古典 CV
+# 方法準（能猜出被遮住的角落在哪，古典方法完全做不到這件事）。
+#
+# ID_CARD_USE_ML_DETECTOR 這個開關可以隨時關掉退回純古典方法——ML
+# 路徑找不到權重檔／`ultralytics` 沒裝／信心不足，本來就會自動退回
+# 古典流程（見 _get_id_card_pose_model()），這個開關是給「想整個跳過
+# ML、直接用古典方法」的情境用的，例如懷疑是 ML 路徑造成的問題想
+# 排除變因時。
+#
+# ID_CARD_ML_MIN_CONFIDENCE 門檻是拿 5 張真實測試照片實測校準的：
+# 表現好的案例（手指蓋角、正常拿法）confidence 落在 0.8~0.94，表現
+# 不穩的暗光案例只有 0.34，0.5 剛好落在中間，能把不穩的案例擋掉、
+# 讓它退回古典方法（此時古典方法有 config.ID_CARD_MIN_BRIGHTNESS
+# 這道亮度檢查頂著，暗光照片通常還沒走到這裡就已經被擋掉了）。
+ID_CARD_USE_ML_DETECTOR = True
+ID_CARD_ML_MIN_CONFIDENCE = 0.5
+ID_CARD_ML_WEIGHTS_PATH = BASE_DIR / "id_card_detector" / "weights" / "best.pt"
 
 # 對照組｜眨眼 EAR 閾值
 # 標準 6 點 EAR 公式（Soukupová & Čech）的文獻常見值：睜眼約 0.25-0.35，

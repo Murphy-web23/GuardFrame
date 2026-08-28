@@ -133,9 +133,14 @@ export const SmsVerifyScreen: React.FC<SmsVerifyScreenProps> = ({
         </p>
       </div>
 
-      {/* PHASE 1: INPUT PHONE NUMBER */}
+      {/* PHASE 1: INPUT PHONE NUMBER
+          2026-08-28：原本外層是 flex-1 justify-between，想把按鈕釘在
+          畫面最下方，但這一階段內容很短（只有一個輸入框），真人手機
+          測試回報「下面一整塊看起來是無效介面」——justify-between 在
+          內容短、容器又撐滿全螢幕高度時，會留下一大塊視覺上像是壞掉
+          的空白區域。改成讓按鈕自然接在內容後面，不強行釘底。 */}
       {phase === 'input_phone' && (
-        <div className="flex flex-col flex-1 justify-between space-y-6">
+        <div className="flex flex-col space-y-6">
           <div className="space-y-4">
             {/* Phone Input Box */}
             <div className="space-y-1.5">
@@ -189,7 +194,7 @@ export const SmsVerifyScreen: React.FC<SmsVerifyScreenProps> = ({
 
       {/* PHASE 2: 5-MIN COUNTDOWN & 6-DIGIT CODE VERIFICATION */}
       {phase === 'input_code' && (
-        <div className="flex flex-col flex-1 justify-between space-y-6">
+        <div className="flex flex-col space-y-6">
           <div className="space-y-4">
             {/* 5 Minutes Countdown Notice */}
             <div className="flex items-center justify-between p-3 rounded-2xl bg-sky-50/70 border border-sky-100 text-xs">

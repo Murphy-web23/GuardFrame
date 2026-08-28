@@ -7,6 +7,7 @@ Session 機制（sms/send、sms/verify、account-setup、reset）——這四個
 機制（§4.9，帳號密碼＋bcrypt），跟這裡的申請人 session 無關，還沒做。
 """
 
+import asyncio
 import base64
 import random
 import secrets
@@ -14,6 +15,7 @@ import shutil
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -21,10 +23,11 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 import config
 from api.auth import verify_admin_login
-from api.database import get_db
+from api.database import SessionLocal, get_db
 from api.models import AdminCredential, Applicant, VerificationRecordRow
 from baseline_challenge.analyzer import analyze_baseline
 from common.face_utils import extract_frames
@@ -212,8 +215,29 @@ def get_challenge_order(
     _require_session(applicant, x_session_id, check_deadline=True)
 
     if applicant.challenge_order is None:
-        order = list(config.BASELINE_ACTION_DURATIONS.keys())
-        random.shuffle(order)
+        # 2026-08-25：真人測試發現 Track 3（照明響應）相關係數常常量不到
+        # ——追問使用者後確認：如果隨機順序剛好把 turn_left/turn_right
+        # 排在最後一個動作挑戰，語音一結束照明序列就立刻開始播放，使用者
+        # 根本來不及把臉轉回正面，量到的是側臉反光，跟演算法預期「正面
+        # 迎向螢幕」的反光模式完全不同。原本想加一段緩衝時間讓使用者轉回
+        # 來，但這樣會拉長影片、拖慢後續分析（見使用者的考量）。改成在
+        # 洗牌時限制：最後一個動作永遠是 blink 或 wave_hand 其中之一
+        # （兩者都不會讓頭轉離鏡頭，眨眼甚至幾乎不影響臉部朝向），其餘
+        # 三個動作（含另一個沒被選中的安全動作）維持完全隨機排列——不
+        # 影響 §5.3 隨機順序防重放的安全設計，只是限制了「最後一個動作」
+        # 這一個位置的候選集合，其他位置跟出現機率都還是隨機的。
+        #
+        # 原本的隨機邏輯（暫時停用，備份供之後改回來）：
+        #     safe_last_actions = ["blink", "wave_hand"]
+        #     last_action = random.choice(safe_last_actions)
+        #     remaining = [a for a in config.BASELINE_ACTION_DURATIONS if a != last_action]
+        #     random.shuffle(remaining)
+        #     order = remaining + [last_action]
+        #
+        # 2026-08-27：!!! 暫時性 !!! 固定成「眨眼、左轉頭、右轉頭、揮手」
+        # 這個順序方便測試比對，之後要記得改回上面那段隨機邏輯，
+        # 恢復 §5.3 的隨機順序防重放設計。
+        order = ["blink", "turn_left", "turn_right", "wave_hand"]
         applicant.challenge_order = order
         db.commit()
 
@@ -258,6 +282,68 @@ def _slice_phase(frames, span):
     return frames[start : end + 1]
 
 
+def _ms_range_to_frame_range(ms_span, fps):
+    """把 [起, 訖) 毫秒區間（相對錄影開始）換算成 `_slice_phase()`
+    期待的 [起, 訖] 影格索引（訖含在內）。
+
+    2026-08-27：前端原本自己用假設的固定 30fps 換算好才送影格索引過來
+    （見 `common/schemas.py` `RecordingPhases` 的說明）——裝置實際錄影
+    fps 常常達不到 30，兩邊 fps 對不上時換算出來的影格範圍會超出影片
+    實際長度。改成前端只送毫秒，這裡用 `extract_frames()` 解碼後量到
+    的真實 fps 換算，公式跟前端原本 `verificationRecording.ts` 的
+    `msRangeToFrameRange()` 完全對應，只是 fps 換成真的。
+    """
+    start_ms, end_ms = ms_span
+    start = round(start_ms / 1000 * fps)
+    end = max(start, round(end_ms / 1000 * fps) - 1)
+    return (start, end)
+
+
+def _frames_excluding_many(frames, spans):
+    """回傳排除掉多個 [起, 訖]（影格索引，訖含在內）範圍後的影格，
+    spans 之間可以不連續、不用事先排序、也可以重疊。
+
+    2026-08-25：真人測試發現 rPPG 真人分數持續偏高（心率算出 156 bpm
+    這種不合理數字、SNR 是負的、roiConsistency 卡在 0）——追查
+    analyze_rppg() 目前吃的是整支影片（見下面 _run_verify_analysis()
+    的呼叫），包含使用者「揮手」跟「轉頭」這些動作挑戰。手在臉前面
+    揮動、頭部左右轉動時左右臉頰不對稱地變化角度/受光，都是遠比心跳
+    血流變化（<1% 像素差異）大得多的訊號污染源，足以蓋過真正的脈搏
+    訊號，額頭跟兩頰算出的心率自然對不上。一開始只排除揮手（污染最
+    明顯），後來真人測試證實光排除揮手還不夠，roiConsistency 還是常常
+    卡在 0——轉頭的影響雖然理論上比較輕微，但沒有排除的話還是持續在
+    污染訊號。改成排除揮手＋左轉＋右轉全部三個動作，只留眨眼＋照明
+    響應階段的影格給 rPPG 用。代價：可用畫面時長從原本的 20+ 秒
+    掉到只剩 5~6 秒，頻譜解析度會變差，預期會更常直接判定「訊號不
+    足」而不是「不一致」——這是跟使用者討論過、確認可以接受的取捨
+    （比起「訊號污染出一個看似有效但其實是雜訊的心率」，寧可老實承認
+    量不到）。
+    """
+    exclude = set()
+    for start, end in spans:
+        exclude.update(range(start, end + 1))
+    return [f for i, f in enumerate(frames) if i not in exclude]
+
+
+def _action_time_boundaries(challenge_dicts, fps):
+    """依伺服器指派的挑戰順序＋各動作宣告時長，重建每個動作在整支
+    影片裡的 [起始影格, 結束影格] 邊界（累加時長換算成影格索引），
+    跟前端 handleStartVerification() 算 boundaries 用的是同一套邏輯
+    （見 FaceVerificationEngine.tsx），這裡在後端重算一次是因為
+    §5.1 的 phases 契約只有 action/lighting/occlusion 三段、沒有
+    每個動作各自的邊界，不想為了這個新需求改動既有 payload 契約。
+    """
+    boundaries = {}
+    cursor_s = 0.0
+    for item in challenge_dicts:
+        start_s = cursor_s
+        cursor_s += item["durationSec"]
+        start_frame = int(round(start_s * fps))
+        end_frame = int(round(cursor_s * fps)) - 1
+        boundaries[item["action"]] = (start_frame, max(start_frame, end_frame))
+    return boundaries
+
+
 def _sample_for_synthetic(frames, count):
     """均勻抽樣並縮放成 224x224，供 Track 1 使用。
 
@@ -293,6 +379,34 @@ async def rectify_id_card_endpoint(image: UploadFile = File(...)) -> IdCardRecti
 
     result = rectify_id_card(decoded)
 
+    # 2026-08-25：暫時的診斷用途——真人測試回報「鏡頭拍攝失敗、上傳檔案
+    # 卻成功」，懷疑鏡頭擷取出來的畫面本身有問題（不是後端演算法的
+    # 問題，因為同一顆演算法上傳真的照片能過）。失敗時把收到的原始
+    # 畫面存下來，才能直接用肉眼比對到底鏡頭擷取出了什麼問題，之後
+    # 確認原因後這段要拿掉。
+    if not result["success"]:
+        debug_dir = config.BASE_DIR / "data" / "_debug_id_card_failures"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_path = debug_dir / f"{datetime.now():%Y%m%d_%H%M%S_%f}.jpg"
+        cv2.imwrite(str(debug_path), decoded)
+        print(f"[身分證失敗畫面已存檔] {debug_path}", flush=True)
+    else:
+        # 2026-08-27：!!! 暫時性 !!! 真人測試回報「四角有抓到，但矯正
+        # 出來的畫面還是歪的」——上面那段只存「找不到四邊形」的失敗
+        # 案例，這種「有找到、但結果不對」的狀況完全沒有留底可以比對。
+        # 同時存原圖跟矯正後的結果，才能直接看出是角點抓錯位置，還是
+        # 角點排序又出問題。確認原因後這段要拿掉。
+        debug_dir = config.BASE_DIR / "data" / "_debug_id_card_skewed"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        stamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}"
+        cv2.imwrite(str(debug_dir / f"{stamp}_orig.jpg"), decoded)
+        cv2.imwrite(str(debug_dir / f"{stamp}_rectified.jpg"), result["rectified"])
+        print(
+            f"[身分證成功畫面已存檔] {stamp}，corners={result['corners']}，"
+            f"confidence={result['confidence']:.3f}",
+            flush=True,
+        )
+
     rectified_uri = None
     if result["success"]:
         ok, buf = cv2.imencode(".jpg", result["rectified"])
@@ -308,7 +422,7 @@ async def rectify_id_card_endpoint(image: UploadFile = File(...)) -> IdCardRecti
     )
 
 
-@router.post("/applicants/{applicant_id}/verify", response_model=VerificationRecord)
+@router.post("/applicants/{applicant_id}/verify")
 async def verify(
     applicant_id: int,
     video: UploadFile = File(...),
@@ -358,12 +472,23 @@ async def verify(
 
     suffix = Path(video.filename or "video.mp4").suffix or ".mp4"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp.write(await video.read())
+        video_bytes = await video.read()
+        tmp.write(video_bytes)
         tmp_path = tmp.name
 
     try:
         frames, fps = extract_frames(tmp_path)
     except (FileNotFoundError, ValueError) as exc:
+        # 2026-08-24：暫時的診斷 log——「無法開啟影片檔」這個錯誤，可能是
+        # 上傳過程沒收完整（檔案很小/空的），也可能是檔案大小正常但格式
+        # 真的解不開，兩者原因完全不同。先印出實際收到的位元組數、
+        # content-type、檔名，下次真人測試失敗時才不用用猜的。
+        print(
+            f"[影片解碼失敗診斷] filename={video.filename!r} "
+            f"content_type={video.content_type!r} "
+            f"收到位元組數={len(video_bytes)} 錯誤={exc}",
+            flush=True,
+        )
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -376,13 +501,107 @@ async def verify(
         Path(tmp_path).unlink(missing_ok=True)
         return JSONResponse(status_code=422, content={"quality": quality})
 
-    phases = challenges_payload.recording.phases
+    # 2026-08-25：五層分析＋融合決策＋寫入資料庫，CPU 上實測要數十秒到
+    # 數分鐘。原本這裡是直接同步跑完才回應，這支請求會佔住整個後端
+    # process 那麼久（見 PHASE1_NOTES §10.1／§11）。手機透過 Cloudflare
+    # Tunnel 展示時，通道本身的逾時撐不了這麼久，會在後端還在正常運算
+    # 時就把連線斷開、前端顯示「無法連線」。改成：這裡的驗證跟畫質檢查
+    # （比較快）維持同步，重運算的部分丟進背景執行緒（run_in_threadpool），
+    # 立刻回應「已受理、處理中」，前端改成輪詢
+    # GET .../verify-result 直到跑完。桌面版跟手機版共用同一支
+    # FaceVerificationEngine.tsx，這裡改一次兩邊都套用，不特別分開處理。
+    # 2026-08-27：phases 現在是前端送的毫秒區間，這裡用解碼後量到的
+    # 真實 fps（上面 extract_frames() 回傳的那個，不是前端假設的固定
+    # 值）換算成影格索引，見 _ms_range_to_frame_range() 的說明。換算
+    # 完之後，下面 _slice_phase()／DB 存檔／VLM 異常影格對應等邏輯
+    # 完全不用改，一樣吃影格索引。
+    phases_ms = challenges_payload.recording.phases
+    phases = SimpleNamespace(
+        action=_ms_range_to_frame_range(phases_ms.action, fps),
+        lighting=_ms_range_to_frame_range(phases_ms.lighting, fps),
+        occlusion=_ms_range_to_frame_range(phases_ms.occlusion, fps),
+    )
+    challenge_dicts = [c.model_dump(by_alias=True) for c in challenges_payload.challenges]
+    light_log_dict = light_log_model.model_dump(by_alias=True)
+
+    _verify_pending.add(applicant_id)
+
+    async def _process_in_background():
+        # 2026-08-25：真人測試踩到的問題——改成背景執行緒後，多個
+        # /verify 請求（例如同一個人重試好幾次、或不同申請人前後腳送出）
+        # 可以同時開始背景分析。但 baseline/synthetic/rppg/photometric/
+        # occlusion 這幾層分析（尤其 InsightFace）目前每次呼叫都重新從
+        # 硬碟載入完整模型，沒有做快取（PHASE1_NOTES §10.1 記錄過的
+        # 架構債，一直沒動）。同步版本因為整支請求互斥，天然不會有這個
+        # 問題；改成非同步後，多個分析真的同時搶 CPU／記憶體去重複載入
+        # 同一組模型，實測會互相拖慢到兩個都跑不完、輪詢永遠停在
+        # 「處理中」。用一個全域的 semaphore 把「真正執行分析」這段限制
+        # 成一次只能有一個在跑——HTTP 回應本身還是立刻 202（Cloudflare
+        # Tunnel 逾時的問題不會回來），只是背景分析變成排隊處理，不是
+        # 真的平行跑好幾份。徹底解法是幫模型做快取／常駐，但那是更大的
+        #改動，這裡先用 semaphore 擋住立即會發生的資源競爭問題。
+        async with _verify_analysis_semaphore:
+            try:
+                await run_in_threadpool(
+                    _run_verify_analysis,
+                    applicant_id,
+                    tmp_path,
+                    suffix,
+                    source_type,
+                    frames,
+                    fps,
+                    phases,
+                    challenge_dicts,
+                    light_log_dict,
+                    quality,
+                )
+            except Exception as exc:  # noqa: BLE001 - 背景工作，異常只能自己記，不會有人 await 這裡的例外
+                print(f"[背景驗證分析失敗] applicant_id={applicant_id} 錯誤={exc}", flush=True)
+            finally:
+                _verify_pending.discard(applicant_id)
+
+    # asyncio.create_task() 回傳的 Task 物件如果沒有任何地方留著參照，
+    # Python 有可能在它跑完之前就把它回收掉（官方文件明講的 GC 陷阱：
+    # 「Save a reference to the result of this function」）——實測踩到
+    # 這個坑：背景分析完全沒有機會執行，_verify_pending 卻已經被
+    # discard，輪詢端點直接回 404「尚未有任何驗證紀錄」。用一個
+    # 模組層級的 set 撐住參照，跑完後在 done callback 裡自己移除。
+    task = asyncio.create_task(_process_in_background())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+    return JSONResponse(status_code=202, content={"status": "processing", "applicantId": applicant_id})
+
+
+# 2026-08-25：追蹤「這個申請人現在是不是還有一筆驗證分析在背景跑」。
+# 用記憶體裡的 set 就好，不用另外加資料庫欄位——伺服器重啟本來就會
+# 中斷所有處理中的分析，跟資料庫是否記得這件事無關；下面的輪詢端點
+# 靠這個 set 判斷要回「還在處理」還是去查資料庫拿結果。
+_verify_pending: set[int] = set()
+
+# 見上面 verify() 裡的說明：只是用來擋住 asyncio.create_task() 的
+# Task 物件不被提前 GC 掉，不承載任何業務邏輯。
+_background_tasks: set[asyncio.Task] = set()
+
+# 見上面 _process_in_background() 的說明：限制「真正執行五層分析」這段
+# 一次只能有一個在跑，避免多個背景分析同時重複載入 InsightFace 模型、
+# 互搶資源導致全部卡住跑不完。
+_verify_analysis_semaphore = asyncio.Semaphore(1)
+
+
+def _run_verify_analysis(
+    applicant_id, tmp_path, suffix, source_type, frames, fps, phases, challenge_dicts,
+    light_log_dict, quality,
+):
+    """在背景執行緒跑五層分析＋融合決策＋寫入資料庫，見上面 verify() 的說明。
+
+    在獨立執行緒裡執行，不能沿用 request-scoped 的 db session（那個
+    session 的生命週期跟這次 HTTP 請求綁在一起，請求結束就可能被關掉），
+    這裡自己開一個新的 SessionLocal()。
+    """
     action_frames = _slice_phase(frames, phases.action)
     lighting_frames = _slice_phase(frames, phases.lighting)
     occlusion_frames = _slice_phase(frames, phases.occlusion)
-
-    challenge_dicts = [c.model_dump(by_alias=True) for c in challenges_payload.challenges]
-    light_log_dict = light_log_model.model_dump(by_alias=True)
 
     baseline_result = analyze_baseline(action_frames, fps, challenge_dicts)
 
@@ -395,8 +614,17 @@ async def verify(
         "topSignals": synthetic_raw["topSignals"],
     }
 
-    rppg_result = analyze_rppg(frames, fps)
-    photometric_result = analyze_photometric(lighting_frames, fps, light_log_dict)
+    action_boundaries = _action_time_boundaries(challenge_dicts, fps)
+    motion_spans = [
+        action_boundaries[action]
+        for action in ("wave_hand", "turn_left", "turn_right")
+        if action in action_boundaries
+    ]
+    rppg_frames = _frames_excluding_many(frames, motion_spans)
+    rppg_result = analyze_rppg(rppg_frames, fps)
+    photometric_result = analyze_photometric(
+        lighting_frames, fps, light_log_dict, buffer_ms=config.PHOTO_LIGHTING_BUFFER_MS
+    )
     occlusion_result = analyze_occlusion(occlusion_frames, fps)
 
     decision = fuse_decision(
@@ -425,6 +653,8 @@ async def verify(
         "occlusion": list(phases.occlusion),
     }
 
+    db = SessionLocal()
+    applicant = db.get(Applicant, applicant_id)
     row = VerificationRecordRow(
         applicant_id=applicant.id,
         timestamp=now,
@@ -485,46 +715,64 @@ async def verify(
         vlm_model=vlm["model"] if vlm else None,
         vlm_latency_ms=vlm["latencyMs"] if vlm else None,
     )
-    db.add(row)
-    db.commit()
-    db.refresh(row)
+    try:
+        db.add(row)
+        db.commit()
+        db.refresh(row)
 
-    # 象徵性保存驗證影片（見 PHASE1_NOTES §八）：只有真的寫進資料庫、
-    # 走完五層分析的紀錄才保留原始影片，不合格或半途失敗的不留（見上面
-    # 兩處 quality/extract_frames 失敗路徑的清理）。這不是合規等級的
-    # 保存架構（沒有加密、沒有備援、沒有正式的保存期限管理），只是先
-    # 證明「架構上支援保留原始影片」這個概念——真的要符合金管會規範，
-    # 需要另外設計儲存位置與存取控管，超出本次專題範圍。
-    video_dir = config.VERIFICATION_VIDEO_DIR / str(applicant_id)
-    video_dir.mkdir(parents=True, exist_ok=True)
-    stored_video_path = video_dir / f"{row.id}{suffix}"
-    shutil.move(tmp_path, stored_video_path)
-    row.video_path = str(stored_video_path.relative_to(config.BASE_DIR))
-    db.commit()
+        # 象徵性保存驗證影片（見 PHASE1_NOTES §八）：只有真的寫進資料庫、
+        # 走完五層分析的紀錄才保留原始影片，不合格或半途失敗的不留（見
+        # 上面兩處 quality/extract_frames 失敗路徑的清理）。這不是合規
+        # 等級的保存架構（沒有加密、沒有備援、沒有正式的保存期限管理），
+        # 只是先證明「架構上支援保留原始影片」這個概念——真的要符合
+        # 金管會規範，需要另外設計儲存位置與存取控管，超出本次專題範圍。
+        video_dir = config.VERIFICATION_VIDEO_DIR / str(applicant_id)
+        video_dir.mkdir(parents=True, exist_ok=True)
+        stored_video_path = video_dir / f"{row.id}{suffix}"
+        shutil.move(tmp_path, stored_video_path)
+        row.video_path = str(stored_video_path.relative_to(config.BASE_DIR))
+        db.commit()
+    finally:
+        db.close()
 
-    record_dict = {
-        "id": f"VF-{now:%Y%m%d}-{row.id:04d}",
-        "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
-        "applicantName": applicant.name,
-        "applicantIdMasked": applicant.id_number_masked,
-        "sourceType": source_type,
-        "recording": {
-            "durationSec": duration_sec,
-            "fps": fps,
-            "totalFrames": len(frames),
-            "phases": phases_dict,
-        },
-        "quality": quality,
-        "baseline": baseline_result,
-        "synthetic": synthetic_result,
-        "rppg": rppg_result,
-        "photometric": photometric_result,
-        "occlusion": occlusion_result,
-        "decision": decision,
-        "vlmSummary": vlm,
-        "accountResult": account_result,
-    }
-    return VerificationRecord.model_validate(record_dict)
+
+@router.get("/applicants/{applicant_id}/verify-result")
+def get_verify_result(
+    applicant_id: int,
+    x_session_id: str = Header(..., alias="X-Session-Id"),
+    db: Session = Depends(get_db),
+):
+    """2026-08-25 新增：搭配上面 verify() 改成非同步背景處理後的輪詢
+    端點。前端送出 POST /verify 拿到 202 後，改成定期打這支確認跑完
+    了沒。回傳格式：
+
+        {"status": "processing"}                       仍在背景分析中
+        {"status": "done", "record": {...}}             跑完，附完整紀錄
+        （quality 檢查沒過、或影片格式錯誤，那兩種情況 /verify 本身
+        就已經同步回 422 了，不會走到這支端點）
+
+    不用 response_model 鎖死成固定形狀，因為兩種狀態的欄位不一樣。
+    """
+    applicant = db.get(Applicant, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="applicant not found")
+
+    _require_session(applicant, x_session_id, check_deadline=False)
+
+    if applicant_id in _verify_pending:
+        return {"status": "processing"}
+
+    latest = (
+        db.query(VerificationRecordRow)
+        .filter_by(applicant_id=applicant_id)
+        .order_by(VerificationRecordRow.id.desc())
+        .first()
+    )
+    if latest is None:
+        raise HTTPException(status_code=404, detail="尚未有任何驗證紀錄")
+
+    record = VerificationRecord.model_validate(_row_to_record_dict(latest))
+    return {"status": "done", "record": record.model_dump(by_alias=True)}
 
 
 @router.post("/applicants/{applicant_id}/account-setup", response_model=AccountSetupResponse)

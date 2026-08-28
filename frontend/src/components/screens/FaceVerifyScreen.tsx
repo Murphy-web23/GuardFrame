@@ -19,17 +19,14 @@ export const FaceVerifyScreen: React.FC<FaceVerifyScreenProps> = ({
   // （見 PhotometricConsentNotice.tsx 頂部的說明）。
   const [hasAcknowledged, setHasAcknowledged] = useState(false);
 
-  const handleVerificationComplete = (
-    confidence: number,
-    photometricPassed = true,
-    verdict: 'pass' | 'review' = 'pass'
-  ) => {
+  // 2026-08-25：/verify 改非同步後，這裡只代表「錄影已成功送出」，
+  // 真正的 verdict 還沒出來（見 FaceVerificationEngine.tsx 的說明），
+  // 先標記 'pending'，真正的值等 TermsSubmitScreen 送出開戶設定前
+  // 才輪詢取得。
+  const handleVerificationComplete = () => {
     updateFormData({
       faceVerified: true,
-      faceConfidence: confidence,
-      photometricPassed: photometricPassed,
-      photometricScore: confidence,
-      verificationVerdict: verdict,
+      verificationVerdict: 'pending',
     });
   };
 

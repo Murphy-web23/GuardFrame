@@ -1,0 +1,815 @@
+<?xml version="1.0" encoding="utf-8"?>
+<annotations>
+  <version>1.1</version>
+  <meta>
+    <task>
+      <id>2</id>
+      <name>batch_02</name>
+      <size>200</size>
+      <mode>annotation</mode>
+      <overlap>0</overlap>
+      <bugtracker></bugtracker>
+      <created>2026-08-28 07:01:45.403892+00:00</created>
+      <updated>2026-08-28 07:28:58.273682+00:00</updated>
+      <subset>default</subset>
+      <start_frame>0</start_frame>
+      <stop_frame>199</stop_frame>
+      <frame_filter></frame_filter>
+      <segments>
+        <segment>
+          <id>2</id>
+          <start>0</start>
+          <stop>199</stop>
+          <url>http://localhost:8080/api/tasks/2/dataset/export/api/jobs/2</url>
+        </segment>
+      </segments>
+      <owner>
+        <username>admin</username>
+        <email>admin@guardframe.local</email>
+      </owner>
+      <assignee></assignee>
+      <labels>
+        <label>
+          <name>id_card</name>
+          <color>#a603ea</color>
+          <type>points</type>
+          <attributes>
+          </attributes>
+        </label>
+      </labels>
+    </task>
+    <dumped>2026-08-28 07:29:19.578549+00:00</dumped>
+  </meta>
+  <image id="0" name="IMG_4886_000000.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="173.94,795.13;932.70,808.33;952.49,1286.68;167.34,1286.68" z_order="0">
+    </points>
+  </image>
+  <image id="1" name="IMG_4886_000010.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="170.64,811.63;942.60,814.93;955.79,1286.68;173.94,1283.38" z_order="0">
+    </points>
+  </image>
+  <image id="2" name="IMG_4886_000021.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="177.24,814.93;932.70,821.53;949.20,1286.68;170.64,1286.68" z_order="0">
+    </points>
+  </image>
+  <image id="3" name="IMG_4886_000032.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="183.83,831.42;932.70,821.53;939.30,1299.88;180.54,1296.58" z_order="0">
+    </points>
+  </image>
+  <image id="4" name="IMG_4886_000042.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="177.24,818.23;936.00,824.82;949.20,1296.58;160.74,1276.78" z_order="0">
+    </points>
+  </image>
+  <image id="5" name="IMG_4886_000053.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="187.13,828.12;949.20,785.24;978.89,1270.19;183.83,1286.68" z_order="0">
+    </points>
+  </image>
+  <image id="6" name="IMG_4886_000064.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="183.83,834.72;929.40,788.54;978.89,1250.39;197.03,1286.68" z_order="0">
+    </points>
+  </image>
+  <image id="7" name="IMG_4886_000074.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="190.43,844.62;919.50,795.13;968.99,1250.39;180.54,1283.38" z_order="0">
+    </points>
+  </image>
+  <image id="8" name="IMG_4886_000085.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="197.03,867.71;909.61,814.93;975.59,1247.09;197.03,1286.68" z_order="0">
+    </points>
+  </image>
+  <image id="9" name="IMG_4886_000096.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="220.12,874.31;912.91,821.53;982.19,1260.29;197.03,1276.78" z_order="0">
+    </points>
+  </image>
+  <image id="10" name="IMG_4886_000107.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="220.12,877.61;893.11,867.71;962.39,1270.19;160.74,1273.48" z_order="0">
+    </points>
+  </image>
+  <image id="11" name="IMG_4886_000117.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="226.72,884.21;909.61,907.30;959.09,1286.68;160.74,1270.19" z_order="0">
+    </points>
+  </image>
+  <image id="12" name="IMG_4886_000128.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="223.42,874.31;909.61,854.52;965.69,1273.48;160.74,1263.59" z_order="0">
+    </points>
+  </image>
+  <image id="13" name="IMG_4886_000139.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="243.22,864.41;922.80,821.53;942.60,1256.99;180.54,1253.69" z_order="0">
+    </points>
+  </image>
+  <image id="14" name="IMG_4886_000149.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="236.62,854.52;929.40,821.53;932.70,1276.78;173.94,1256.99" z_order="0">
+    </points>
+  </image>
+  <image id="15" name="IMG_4886_000160.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="243.22,844.62;916.21,795.13;919.50,1263.59;170.64,1263.59" z_order="0">
+    </points>
+  </image>
+  <image id="16" name="IMG_4886_000171.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="253.11,834.72;929.40,795.13;919.50,1280.08;183.83,1263.59" z_order="0">
+    </points>
+  </image>
+  <image id="17" name="IMG_4886_000181.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="246.52,828.12;939.30,788.54;926.10,1299.88;187.13,1263.59" z_order="0">
+    </points>
+  </image>
+  <image id="18" name="IMG_4886_000192.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="220.12,831.42;919.50,791.83;945.90,1270.19;183.83,1276.78" z_order="0">
+    </points>
+  </image>
+  <image id="19" name="IMG_4886_000203.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="183.83,821.53;909.61,775.34;949.20,1240.49;183.83,1276.78" z_order="0">
+    </points>
+  </image>
+  <image id="20" name="IMG_4886_000214.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="173.94,801.73;893.11,785.24;909.61,1233.90;164.04,1263.59" z_order="0">
+    </points>
+  </image>
+  <image id="21" name="IMG_4886_000224.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="144.25,778.64;843.63,748.95;883.22,1161.32;160.74,1207.50" z_order="0">
+    </points>
+  </image>
+  <image id="22" name="IMG_4886_000235.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="124.45,788.54;777.65,722.56;886.52,1111.83;154.14,1214.10" z_order="0">
+    </points>
+  </image>
+  <image id="23" name="IMG_4886_000246.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="74.97,758.84;764.45,659.88;863.42,1098.64;101.36,1210.80" z_order="0">
+    </points>
+  </image>
+  <image id="24" name="IMG_4886_000256.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="68.37,739.05;790.85,620.29;850.23,1101.94;104.66,1174.52" z_order="0">
+    </points>
+  </image>
+  <image id="25" name="IMG_4886_000267.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="55.17,732.45;757.86,551.01;860.12,1062.35;124.45,1167.92" z_order="0">
+    </points>
+  </image>
+  <image id="26" name="IMG_4886_000278.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="111.26,752.25;784.25,814.93;721.57,1293.28;25.48,1187.71" z_order="0">
+    </points>
+  </image>
+  <image id="27" name="IMG_4886_000289.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="127.75,768.74;827.13,969.98;714.97,1405.44;18.89,1171.22" z_order="0">
+    </points>
+  </image>
+  <image id="28" name="IMG_4886_000299.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="160.74,748.95;873.32,950.19;757.86,1392.25;65.07,1167.92" z_order="0">
+    </points>
+  </image>
+  <image id="29" name="IMG_4886_000310.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="124.45,745.65;896.41,923.79;774.35,1369.15;65.07,1128.33" z_order="0">
+    </points>
+  </image>
+  <image id="30" name="IMG_4886_000321.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="117.86,758.84;889.81,923.79;780.95,1369.15;51.88,1154.72" z_order="0">
+    </points>
+  </image>
+  <image id="31" name="IMG_4886_000331.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="124.45,772.04;873.32,923.79;767.75,1372.45;74.97,1148.12" z_order="0">
+    </points>
+  </image>
+  <image id="32" name="IMG_4886_000342.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="177.24,785.24;866.72,844.62;827.13,1273.48;114.56,1158.02" z_order="0">
+    </points>
+  </image>
+  <image id="33" name="IMG_4886_000353.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="101.36,956.78;747.96,692.87;932.70,1049.15;282.80,1332.87" z_order="0">
+    </points>
+  </image>
+  <image id="34" name="IMG_4886_000363.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="114.56,1068.95;622.60,643.38;919.50,933.69;398.27,1408.74" z_order="0">
+    </points>
+  </image>
+  <image id="35" name="IMG_4886_000374.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="520.33,587.30;850.23,808.33;477.44,1382.35;147.55,1138.23" z_order="0">
+    </points>
+  </image>
+  <image id="36" name="IMG_4886_000385.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="414.76,613.69;813.94,752.25;556.62,1418.64;177.24,1263.59" z_order="0">
+    </points>
+  </image>
+  <image id="37" name="IMG_4886_000396.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="325.69,659.88;744.66,699.46;662.19,1435.13;197.03,1349.36" z_order="0">
+    </points>
+  </image>
+  <image id="38" name="IMG_4886_000406.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="266.31,692.87;685.28,633.48;698.47,1388.95;266.31,1385.65" z_order="0">
+    </points>
+  </image>
+  <image id="39" name="IMG_4886_000417.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="282.80,679.67;701.77,656.58;685.28,1415.34;220.12,1369.15" z_order="0">
+    </points>
+  </image>
+  <image id="40" name="IMG_4886_000428.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="266.31,692.87;685.28,679.67;678.68,1438.43;213.53,1388.95" z_order="0">
+    </points>
+  </image>
+  <image id="41" name="IMG_4886_000438.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="243.22,692.87;681.98,689.57;685.28,1405.44;233.32,1388.95" z_order="0">
+    </points>
+  </image>
+  <image id="42" name="IMG_4886_000449.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="173.94,719.26;665.48,656.58;695.17,1408.74;220.12,1405.44" z_order="0">
+    </points>
+  </image>
+  <image id="43" name="IMG_4886_000460.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="253.11,689.57;668.78,659.88;701.77,1418.64;309.20,1415.34" z_order="0">
+    </points>
+  </image>
+  <image id="44" name="IMG_4886_000471.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="266.31,719.26;701.77,676.37;721.57,1415.34;286.10,1408.74" z_order="0">
+    </points>
+  </image>
+  <image id="45" name="IMG_4886_000481.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="279.50,715.96;695.17,679.67;731.46,1418.64;289.40,1415.34" z_order="0">
+    </points>
+  </image>
+  <image id="46" name="IMG_4886_000492.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="276.21,689.57;721.57,679.67;718.27,1418.64;253.11,1395.55" z_order="0">
+    </points>
+  </image>
+  <image id="47" name="IMG_4886_000503.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="230.02,673.07;691.88,656.58;738.06,1392.25;266.31,1398.85" z_order="0">
+    </points>
+  </image>
+  <image id="48" name="IMG_4886_000513.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="206.93,808.33;658.89,712.66;754.56,1316.37;388.37,1415.34" z_order="0">
+    </points>
+  </image>
+  <image id="49" name="IMG_4886_000524.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="134.35,847.92;543.42,666.47;794.14,1214.10;484.04,1385.65" z_order="0">
+    </points>
+  </image>
+  <image id="50" name="IMG_4886_000535.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="111.26,867.71;371.88,649.98;840.33,1095.34;550.02,1372.45" z_order="0">
+    </points>
+  </image>
+  <image id="51" name="IMG_4886_000545.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="243.22,669.77;863.42,920.49;701.77,1299.88;127.75,1065.65" z_order="0">
+    </points>
+  </image>
+  <image id="52" name="IMG_4886_000556.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="213.53,656.58;899.71,923.79;774.35,1336.16;137.65,1055.75" z_order="0">
+    </points>
+  </image>
+  <image id="53" name="IMG_4886_000567.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="206.93,669.77;932.70,920.49;757.86,1332.87;140.95,1045.86" z_order="0">
+    </points>
+  </image>
+  <image id="54" name="IMG_4886_000578.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="173.94,653.28;922.80,907.30;771.05,1322.97;68.37,1016.16" z_order="0">
+    </points>
+  </image>
+  <image id="55" name="IMG_4886_000588.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="157.44,682.97;889.81,818.23;804.04,1253.69;81.57,1105.24" z_order="0">
+    </points>
+  </image>
+  <image id="56" name="IMG_4886_000599.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="68.37,768.74;797.44,649.98;856.82,1072.25;104.66,1171.22" z_order="0">
+    </points>
+  </image>
+  <image id="57" name="IMG_4886_000610.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="32.08,821.53;734.76,560.91;873.32,950.19;183.83,1200.91" z_order="0">
+    </points>
+  </image>
+  <image id="58" name="IMG_4886_000620.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="32.08,824.82;701.77,551.01;837.03,930.39;147.55,1220.70" z_order="0">
+    </points>
+  </image>
+  <image id="59" name="IMG_4886_000631.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="15.59,844.62;681.98,541.11;837.03,930.39;124.45,1240.49" z_order="0">
+    </points>
+  </image>
+  <image id="60" name="IMG_4886_000642.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="22.19,884.21;675.38,531.22;850.23,927.09;167.34,1266.89" z_order="0">
+    </points>
+  </image>
+  <image id="61" name="IMG_4886_000653.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="78.27,894.10;688.58,593.90;866.72,960.08;249.81,1256.99" z_order="0">
+    </points>
+  </image>
+  <image id="62" name="IMG_4886_000663.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="104.66,1006.27;639.09,633.48;870.02,960.08;325.69,1352.66" z_order="0">
+    </points>
+  </image>
+  <image id="63" name="IMG_4886_000674.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="477.44,610.39;830.43,791.83;523.63,1379.05;137.65,1167.92" z_order="0">
+    </points>
+  </image>
+  <image id="64" name="IMG_4886_000685.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="457.65,620.29;840.33,772.04;566.52,1421.94;180.54,1214.10" z_order="0">
+    </points>
+  </image>
+  <image id="65" name="IMG_4886_000695.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="371.88,653.28;787.55,768.74;592.91,1431.83;147.55,1283.38" z_order="0">
+    </points>
+  </image>
+  <image id="66" name="IMG_4886_000706.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="368.58,673.07;813.94,676.37;764.45,1332.87;371.88,1326.27" z_order="0">
+    </points>
+  </image>
+  <image id="67" name="IMG_4886_000717.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="289.40,679.67;705.07,580.70;850.23,1230.60;431.26,1319.67" z_order="0">
+    </points>
+  </image>
+  <image id="68" name="IMG_4886_000727.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="246.52,712.66;596.21,534.52;883.22,1118.43;523.63,1296.58" z_order="0">
+    </points>
+  </image>
+  <image id="69" name="IMG_4886_000738.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="206.93,732.45;569.81,537.81;870.02,1115.13;517.03,1293.28" z_order="0">
+    </points>
+  </image>
+  <image id="70" name="IMG_4886_000749.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="226.72,696.17;556.62,574.10;780.95,1148.12;427.96,1270.19" z_order="0">
+    </points>
+  </image>
+  <image id="71" name="IMG_4886_000760.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="164.04,706.06;540.12,630.19;675.38,1240.49;279.50,1309.77" z_order="0">
+    </points>
+  </image>
+  <image id="72" name="IMG_4886_000770.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="190.43,669.77;543.42,646.68;586.31,1273.48;164.04,1289.98" z_order="0">
+    </points>
+  </image>
+  <image id="73" name="IMG_4886_000781.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="197.03,620.29;583.01,514.72;790.85,1085.44;427.96,1237.20" z_order="0">
+    </points>
+  </image>
+  <image id="74" name="IMG_4886_000792.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="124.45,283.79;820.54,372.87;767.75,791.83;114.56,732.45" z_order="0">
+    </points>
+  </image>
+  <image id="75" name="IMG_4886_000802.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="81.57,372.87;797.44,359.67;804.04,814.93;104.66,814.93" z_order="0">
+    </points>
+  </image>
+  <image id="76" name="IMG_4886_000813.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="114.56,458.64;784.25,283.79;896.41,699.46;213.53,867.71" z_order="0">
+    </points>
+  </image>
+  <image id="77" name="IMG_4886_000824.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="203.63,511.42;876.62,316.78;968.99,745.65;312.49,927.09" z_order="0">
+    </points>
+  </image>
+  <image id="78" name="IMG_4886_000834.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="223.42,504.82;893.11,346.47;985.48,768.74;309.20,913.90" z_order="0">
+    </points>
+  </image>
+  <image id="79" name="IMG_4886_000845.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="220.12,494.93;896.41,405.86;949.20,818.23;279.50,910.60" z_order="0">
+    </points>
+  </image>
+  <image id="80" name="IMG_4886_000856.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="213.53,448.74;893.11,468.54;860.12,897.40;200.33,864.41" z_order="0">
+    </points>
+  </image>
+  <image id="81" name="IMG_4886_000867.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="223.42,425.65;873.32,494.93;827.13,887.50;193.73,814.93" z_order="0">
+    </points>
+  </image>
+  <image id="82" name="IMG_4886_000877.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="230.02,455.34;873.32,511.42;837.03,917.20;203.63,847.92" z_order="0">
+    </points>
+  </image>
+  <image id="83" name="IMG_4886_000888.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="230.02,485.03;873.32,494.93;873.32,897.40;233.32,880.91" z_order="0">
+    </points>
+  </image>
+  <image id="84" name="IMG_4886_000899.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="233.32,494.93;883.22,501.53;883.22,907.30;230.02,910.60" z_order="0">
+    </points>
+  </image>
+  <image id="85" name="IMG_4886_000909.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="233.32,498.23;896.41,524.62;873.32,930.39;220.12,910.60" z_order="0">
+    </points>
+  </image>
+  <image id="86" name="IMG_4886_000920.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="233.32,511.42;896.41,531.22;879.92,923.79;233.32,900.70" z_order="0">
+    </points>
+  </image>
+  <image id="87" name="IMG_4886_000931.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="210.23,501.53;883.22,557.61;837.03,986.47;187.13,907.30" z_order="0">
+    </points>
+  </image>
+  <image id="88" name="IMG_4886_000942.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="91.46,534.52;728.16,409.15;731.46,758.85;177.24,936.99" z_order="0">
+    </points>
+  </image>
+  <image id="89" name="IMG_4886_000952.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="124.45,514.72;820.54,488.33;830.43,907.30;164.04,936.99" z_order="0">
+    </points>
+  </image>
+  <image id="90" name="IMG_4886_000963.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="157.44,521.32;853.53,603.79;827.13,1029.36;107.96,953.48" z_order="0">
+    </points>
+  </image>
+  <image id="91" name="IMG_4886_000974.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="154.14,541.11;850.23,577.40;856.82,1002.97;134.35,979.88" z_order="0">
+    </points>
+  </image>
+  <image id="92" name="IMG_4886_000984.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="183.83,541.11;909.61,560.91;896.41,1012.87;177.24,979.88" z_order="0">
+    </points>
+  </image>
+  <image id="93" name="IMG_4886_000995.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="200.33,557.61;952.49,590.60;903.01,1029.36;206.93,1002.97" z_order="0">
+    </points>
+  </image>
+  <image id="94" name="IMG_4886_001006.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="200.33,537.81;919.50,584.00;916.21,1029.36;173.94,1006.27" z_order="0">
+    </points>
+  </image>
+  <image id="95" name="IMG_4886_001016.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="197.03,547.71;945.90,587.30;912.91,1042.56;173.94,1002.97" z_order="0">
+    </points>
+  </image>
+  <image id="96" name="IMG_4886_001027.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="213.53,574.10;955.79,630.19;909.61,1092.04;170.64,1039.26" z_order="0">
+    </points>
+  </image>
+  <image id="97" name="IMG_4886_001038.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="223.42,554.31;959.09,630.19;909.61,1085.44;177.24,1026.06" z_order="0">
+    </points>
+  </image>
+  <image id="98" name="IMG_4886_001049.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="206.93,541.11;942.60,603.79;909.61,1055.75;160.74,1002.97" z_order="0">
+    </points>
+  </image>
+  <image id="99" name="IMG_4886_001059.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="216.82,524.62;975.59,593.90;932.70,1055.75;170.64,993.07" z_order="0">
+    </points>
+  </image>
+  <image id="100" name="IMG_4886_001070.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="226.72,501.53;978.89,577.40;932.70,1049.15;183.83,986.47" z_order="0">
+    </points>
+  </image>
+  <image id="101" name="IMG_4886_001081.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="246.52,504.82;978.89,577.40;939.30,1042.56;197.03,979.88" z_order="0">
+    </points>
+  </image>
+  <image id="102" name="IMG_4886_001091.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="253.11,524.62;995.38,610.39;942.60,1062.35;200.33,993.07" z_order="0">
+    </points>
+  </image>
+  <image id="103" name="IMG_4886_001102.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="282.80,597.20;1011.88,682.97;955.79,1134.93;223.42,1059.05" z_order="0">
+    </points>
+  </image>
+  <image id="104" name="IMG_4886_001113.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="292.70,666.47;1038.27,775.34;968.99,1230.60;220.12,1141.53" z_order="0">
+    </points>
+  </image>
+  <image id="105" name="IMG_4886_001124.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="266.31,745.65;1011.88,877.61;932.70,1349.36;180.54,1217.40" z_order="0">
+    </points>
+  </image>
+  <image id="106" name="IMG_4886_001134.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="292.70,877.61;1074.56,1062.35;978.89,1540.70;180.54,1385.65" z_order="0">
+    </points>
+  </image>
+  <image id="107" name="IMG_4886_001145.jpg" width="1080" height="1920">
+  </image>
+  <image id="108" name="IMG_4886_001156.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="216.82,986.47;1064.66,1154.72;988.78,1679.26;104.66,1520.91" z_order="0">
+    </points>
+  </image>
+  <image id="109" name="IMG_4886_001166.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="137.65,920.49;1018.47,1118.43;919.50,1642.97;22.19,1487.92" z_order="0">
+    </points>
+  </image>
+  <image id="110" name="IMG_4886_001177.jpg" width="1080" height="1920">
+  </image>
+  <image id="111" name="IMG_4886_001188.jpg" width="1080" height="1920">
+  </image>
+  <image id="112" name="IMG_4886_001198.jpg" width="1080" height="1920">
+  </image>
+  <image id="113" name="IMG_4886_001209.jpg" width="1080" height="1920">
+  </image>
+  <image id="114" name="IMG_4886_001220.jpg" width="1080" height="1920">
+  </image>
+  <image id="115" name="IMG_4886_001231.jpg" width="1080" height="1920">
+  </image>
+  <image id="116" name="IMG_4886_001241.jpg" width="1080" height="1920">
+  </image>
+  <image id="117" name="IMG_4886_001252.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="236.62,745.65;975.59,1065.65;764.45,1514.31;22.19,1214.10" z_order="0">
+    </points>
+  </image>
+  <image id="118" name="IMG_4886_001263.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="253.11,729.15;975.59,1072.25;757.86,1504.41;18.89,1214.10" z_order="0">
+    </points>
+  </image>
+  <image id="119" name="IMG_4886_001273.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="236.62,772.04;932.70,1108.54;728.16,1524.21;22.19,1210.80" z_order="0">
+    </points>
+  </image>
+  <image id="120" name="IMG_4886_001284.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="328.99,791.83;1034.97,1105.24;837.03,1527.50;94.76,1256.99" z_order="0">
+    </points>
+  </image>
+  <image id="121" name="IMG_4886_001295.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="385.07,775.34;1044.87,1085.44;860.12,1478.02;180.54,1227.30" z_order="0">
+    </points>
+  </image>
+  <image id="122" name="IMG_4886_001306.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="368.58,758.84;1025.07,1045.86;850.23,1448.33;157.44,1197.61" z_order="0">
+    </points>
+  </image>
+  <image id="123" name="IMG_4886_001316.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="365.28,748.95;1021.77,1049.15;866.72,1484.62;137.65,1214.10" z_order="0">
+    </points>
+  </image>
+  <image id="124" name="IMG_4886_001327.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="378.47,765.44;1018.47,1085.44;860.12,1491.22;147.55,1217.40" z_order="0">
+    </points>
+  </image>
+  <image id="125" name="IMG_4886_001338.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="427.96,762.14;1038.27,1098.64;870.02,1517.61;160.74,1214.10" z_order="0">
+    </points>
+  </image>
+  <image id="126" name="IMG_4886_001348.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="404.87,765.44;1011.88,1088.74;873.32,1530.80;137.65,1210.80" z_order="0">
+    </points>
+  </image>
+  <image id="127" name="IMG_4886_001359.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="371.88,781.94;1015.17,1131.63;833.73,1550.60;117.86,1237.20" z_order="0">
+    </points>
+  </image>
+  <image id="128" name="IMG_4886_001370.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="391.67,788.54;1034.97,1144.82;837.03,1563.79;117.86,1247.09" z_order="0">
+    </points>
+  </image>
+  <image id="129" name="IMG_4886_001380.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="319.09,785.24;995.38,1151.42;777.65,1580.29;65.07,1276.78" z_order="0">
+    </points>
+  </image>
+  <image id="130" name="IMG_4886_001391.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="312.49,811.63;1001.98,1184.41;797.44,1606.68;61.77,1283.38" z_order="0">
+    </points>
+  </image>
+  <image id="131" name="IMG_4886_001402.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="328.99,798.43;1054.76,1191.01;804.04,1616.58;41.98,1306.47" z_order="0">
+    </points>
+  </image>
+  <image id="132" name="IMG_4886_001413.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="358.68,791.83;1038.27,1200.91;863.42,1669.36;55.17,1289.98" z_order="0">
+    </points>
+  </image>
+  <image id="133" name="IMG_4886_001423.jpg" width="1080" height="1920">
+  </image>
+  <image id="134" name="IMG_4886_001434.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="253.11,729.15;936.00,1121.73;837.03,1600.08;8.99,1214.10" z_order="0">
+    </points>
+  </image>
+  <image id="135" name="IMG_4886_001445.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="282.80,758.84;955.79,1138.23;873.32,1609.98;22.19,1224.00" z_order="0">
+    </points>
+  </image>
+  <image id="136" name="IMG_4886_001455.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="292.70,772.04;985.48,1121.73;833.73,1583.59;48.58,1296.58" z_order="0">
+    </points>
+  </image>
+  <image id="137" name="IMG_4886_001466.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="210.23,758.84;962.39,979.88;833.73,1451.63;45.28,1247.09" z_order="0">
+    </points>
+  </image>
+  <image id="138" name="IMG_4886_001477.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="253.11,748.95;972.29,983.17;860.12,1425.24;81.57,1243.79" z_order="0">
+    </points>
+  </image>
+  <image id="139" name="IMG_4886_001487.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="216.82,781.94;945.90,996.37;837.03,1431.83;78.27,1260.29" z_order="0">
+    </points>
+  </image>
+  <image id="140" name="IMG_4886_001498.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="299.30,715.96;965.69,946.89;856.82,1395.55;91.46,1220.70" z_order="0">
+    </points>
+  </image>
+  <image id="141" name="IMG_4886_001509.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="276.21,712.66;972.29,953.48;843.63,1375.75;78.27,1144.82" z_order="0">
+    </points>
+  </image>
+  <image id="142" name="IMG_4886_001520.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="368.58,689.57;998.68,979.88;804.04,1379.05;147.55,1039.26" z_order="0">
+    </points>
+  </image>
+  <image id="143" name="IMG_4886_001530.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="375.17,679.67;1008.58,969.98;827.13,1375.75;197.03,1062.35" z_order="0">
+    </points>
+  </image>
+  <image id="144" name="IMG_4886_001541.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="398.27,702.76;1018.47,979.88;843.63,1365.86;206.93,1045.86" z_order="0">
+    </points>
+  </image>
+  <image id="145" name="IMG_4886_001552.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="411.46,692.87;992.08,983.17;790.85,1382.35;206.93,1002.97" z_order="0">
+    </points>
+  </image>
+  <image id="146" name="IMG_4886_001562.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="487.34,722.56;1041.57,1167.92;728.16,1544.00;203.63,1002.97" z_order="0">
+    </points>
+  </image>
+  <image id="147" name="IMG_4886_001573.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="477.44,679.67;1025.07,1144.82;721.57,1491.22;193.73,960.08" z_order="0">
+    </points>
+  </image>
+  <image id="148" name="IMG_4886_001584.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="464.25,597.20;1058.06,1002.97;794.14,1388.95;203.63,910.60" z_order="0">
+    </points>
+  </image>
+  <image id="149" name="IMG_4886_001595.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="345.48,511.42;1018.47,900.70;761.15,1322.97;84.87,818.23" z_order="0">
+    </points>
+  </image>
+  <image id="150" name="IMG_4886_001605.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="276.21,514.72;968.99,897.40;771.05,1326.27;68.37,927.09" z_order="0">
+    </points>
+  </image>
+  <image id="151" name="IMG_4886_001616.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="131.05,574.10;896.41,758.85;787.55,1214.10;35.38,1002.97" z_order="0">
+    </points>
+  </image>
+  <image id="152" name="IMG_4886_001627.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="124.45,640.08;863.42,745.65;860.12,1181.11;71.67,1085.44" z_order="0">
+    </points>
+  </image>
+  <image id="153" name="IMG_4886_001637.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="190.43,666.47;886.52,758.85;850.23,1187.71;124.45,1062.35" z_order="0">
+    </points>
+  </image>
+  <image id="154" name="IMG_4886_001648.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="236.62,745.65;863.42,781.94;850.23,1210.80;164.04,1144.82" z_order="0">
+    </points>
+  </image>
+  <image id="155" name="IMG_4886_001659.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="160.74,758.84;817.24,814.93;804.04,1286.68;111.26,1204.21" z_order="0">
+    </points>
+  </image>
+  <image id="156" name="IMG_4886_001669.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="114.56,801.73;797.44,785.24;797.44,1260.29;94.76,1247.09" z_order="0">
+    </points>
+  </image>
+  <image id="157" name="IMG_4886_001680.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="127.75,818.23;810.64,778.64;813.94,1266.89;101.36,1240.49" z_order="0">
+    </points>
+  </image>
+  <image id="158" name="IMG_4886_001691.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="140.95,805.03;840.33,821.53;823.83,1296.58;98.06,1237.20" z_order="0">
+    </points>
+  </image>
+  <image id="159" name="IMG_4886_001702.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="137.65,801.73;843.63,867.71;790.85,1369.15;68.37,1250.39" z_order="0">
+    </points>
+  </image>
+  <image id="160" name="IMG_4886_001712.jpg" width="1080" height="1920">
+  </image>
+  <image id="161" name="IMG_4886_001723.jpg" width="1080" height="1920">
+  </image>
+  <image id="162" name="IMG_4886_001734.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="160.74,781.94;929.40,969.98;820.54,1431.83;22.19,1210.80" z_order="0">
+    </points>
+  </image>
+  <image id="163" name="IMG_4886_001744.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="101.36,953.48;873.32,1012.87;853.53,1504.41;45.28,1425.24" z_order="0">
+    </points>
+  </image>
+  <image id="164" name="IMG_4886_001755.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="94.76,936.99;870.02,1062.35;794.14,1563.79;12.29,1412.04" z_order="0">
+    </points>
+  </image>
+  <image id="165" name="IMG_4886_001766.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="121.15,927.09;886.52,1052.45;823.83,1530.80;22.19,1398.85" z_order="0">
+    </points>
+  </image>
+  <image id="166" name="IMG_4886_001777.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="164.04,894.10;945.90,1016.16;863.42,1497.81;78.27,1375.75" z_order="0">
+    </points>
+  </image>
+  <image id="167" name="IMG_4886_001787.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="147.55,821.53;1025.07,1049.15;876.62,1431.83;88.16,1243.79" z_order="0">
+    </points>
+  </image>
+  <image id="168" name="IMG_4886_001798.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="88.17,907.30;1005.28,1049.15;876.62,1418.64;84.87,1296.58" z_order="0">
+    </points>
+  </image>
+  <image id="169" name="IMG_4886_001809.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="81.57,913.90;992.08,1045.86;876.62,1418.64;74.97,1306.47" z_order="0">
+    </points>
+  </image>
+  <image id="170" name="IMG_4886_001819.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="160.74,841.32;982.19,979.88;873.32,1431.83;94.76,1306.47" z_order="0">
+    </points>
+  </image>
+  <image id="171" name="IMG_4886_001830.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="206.93,834.72;952.49,946.89;883.22,1421.94;124.45,1296.58" z_order="0">
+    </points>
+  </image>
+  <image id="172" name="IMG_4886_001841.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="137.65,910.60;912.91,894.10;942.60,1369.15;137.65,1425.24" z_order="0">
+    </points>
+  </image>
+  <image id="173" name="IMG_4886_001851.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="88.17,1237.20;695.17,722.56;1011.88,1072.25;418.06,1623.17" z_order="0">
+    </points>
+  </image>
+  <image id="174" name="IMG_4886_001862.jpg" width="1080" height="1920">
+  </image>
+  <image id="175" name="IMG_4886_001873.jpg" width="1080" height="1920">
+  </image>
+  <image id="176" name="IMG_4886_001884.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="573.11,570.80;1034.97,890.80;569.81,1576.99;117.86,1289.98" z_order="0">
+    </points>
+  </image>
+  <image id="177" name="IMG_4886_001894.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="569.81,577.40;1025.07,851.22;579.71,1583.59;137.65,1326.27" z_order="0">
+    </points>
+  </image>
+  <image id="178" name="IMG_4886_001905.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="606.10,633.48;1064.66,854.52;705.07,1576.99;253.11,1385.65" z_order="0">
+    </points>
+  </image>
+  <image id="179" name="IMG_4886_001916.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="569.81,570.80;998.68,791.83;685.28,1544.00;223.42,1326.27" z_order="0">
+    </points>
+  </image>
+  <image id="180" name="IMG_4886_001926.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="507.13,574.10;988.78,686.27;774.35,1481.32;253.11,1362.56" z_order="0">
+    </points>
+  </image>
+  <image id="181" name="IMG_4886_001937.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="401.57,564.21;903.01,636.78;784.25,1445.03;272.91,1369.15" z_order="0">
+    </points>
+  </image>
+  <image id="182" name="IMG_4886_001948.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="371.88,584.00;889.81,633.48;794.14,1454.93;289.40,1405.44" z_order="0">
+    </points>
+  </image>
+  <image id="183" name="IMG_4886_001959.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="371.88,613.69;889.81,593.90;866.72,1412.04;355.38,1395.55" z_order="0">
+    </points>
+  </image>
+  <image id="184" name="IMG_4886_001969.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="348.78,560.91;896.41,511.42;922.80,1296.58;418.06,1316.37" z_order="0">
+    </points>
+  </image>
+  <image id="185" name="IMG_4886_001980.jpg" width="1080" height="1920">
+  </image>
+  <image id="186" name="IMG_4886_001991.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="305.90,425.65;721.57,419.05;949.20,1026.06;451.05,1022.76" z_order="0">
+    </points>
+  </image>
+  <image id="187" name="IMG_4886_002001.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="451.05,290.39;850.23,359.67;780.95,1148.12;365.28,1144.82" z_order="0">
+    </points>
+  </image>
+  <image id="188" name="IMG_4886_002012.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="140.95,933.69;550.02,557.61;830.43,805.03;652.29,1233.90" z_order="0">
+    </points>
+  </image>
+  <image id="189" name="IMG_4886_002023.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="61.77,880.91;629.20,584.00;962.39,851.22;431.26,1276.78" z_order="0">
+    </points>
+  </image>
+  <image id="190" name="IMG_4886_002033.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="45.28,930.39;563.22,590.60;899.71,758.85;434.56,1184.41" z_order="0">
+    </points>
+  </image>
+  <image id="191" name="IMG_4886_002044.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="5.69,910.60;546.72,646.68;767.75,953.48;223.42,1283.38" z_order="0">
+    </points>
+  </image>
+  <image id="192" name="IMG_4886_002055.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="8.99,884.21;586.31,616.99;846.93,913.90;243.22,1240.49" z_order="0">
+    </points>
+  </image>
+  <image id="193" name="IMG_4886_002066.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="45.28,887.50;629.20,640.08;833.73,976.58;239.92,1250.39" z_order="0">
+    </points>
+  </image>
+  <image id="194" name="IMG_4886_002076.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="94.76,748.95;744.66,673.07;850.23,1039.26;160.74,1177.81" z_order="0">
+    </points>
+  </image>
+  <image id="195" name="IMG_4886_002087.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="137.65,686.27;840.33,620.29;909.61,1039.26;144.25,1111.83" z_order="0">
+    </points>
+  </image>
+  <image id="196" name="IMG_4886_002098.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="177.24,663.17;906.31,640.08;955.79,1068.95;173.94,1098.64" z_order="0">
+    </points>
+  </image>
+  <image id="197" name="IMG_4886_002108.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="183.83,666.47;896.41,640.08;932.70,1065.65;173.94,1105.24" z_order="0">
+    </points>
+  </image>
+  <image id="198" name="IMG_4886_002119.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="193.73,689.57;873.32,616.99;975.59,969.98;160.74,1032.66" z_order="0">
+    </points>
+  </image>
+  <image id="199" name="IMG_4886_002130.jpg" width="1080" height="1920">
+    <points label="id_card" source="manual" occluded="0" points="183.83,666.47;873.32,626.89;972.29,966.68;160.74,1026.06" z_order="0">
+    </points>
+  </image>
+</annotations>

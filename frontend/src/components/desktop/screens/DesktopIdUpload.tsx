@@ -45,30 +45,141 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
   const [ocrStatus, setOcrStatus] = useState<'idle' | 'scanning' | 'success' | 'failed'>('idle');
   const [rectifyStatus, setRectifyStatus] = useState<'idle' | 'capturing' | 'failed'>('idle');
   const [rectifyError, setRectifyError] = useState<string>('');
+  // 2026-08-25：見下面 startCamera() 的說明——getUserMedia 失敗時，原本
+  // 只有 console.warn，畫面完全沒有任何反應，使用者看不出鏡頭其實沒有
+  // 真的啟動（下面假的「已對齊」計時器還是照樣跑，誤導使用者以為一切
+  // 正常）。加這個狀態把失敗原因顯示出來。
+  const [cameraErrorMsg, setCameraErrorMsg] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // 2026-08-25：定期取樣畫面中央區域算邊緣密度用的暫存 canvas，跟下面
+  // 拍照用的 canvasRef 分開，避免互相干擾（同 IdUploadScreen.tsx 的
+  // scanCanvasRef，見那邊的說明）。
+  const scanCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // 2026-08-25：見下面掃描 useEffect 的說明——即時對齊偵測要抓「畫面上
+  // 真正顯示的四角引導框」所在的實際區域，這兩個 ref 用來量測引導框
+  // 跟它的容器在螢幕上的實際位置。
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
+  const guideBoxRef = useRef<HTMLDivElement | null>(null);
+  // 2026-08-25：見 IdUploadScreen.tsx（mobile 版）同一段說明——原本掛
+  // 在 DOM 上、用 CSS `hidden` 藏起來的 <canvas> 在部分 iOS Safari
+  // 版本上，拍照畫進去的內容有可能沒有真的被畫出來（真人測試證實
+  // mobile 版拍出純黑畫面），改成懶建立、完全不掛 DOM 的離屏 canvas。
+  // 桌面版理論上不受這個 WebKit 怪癖影響（一般用桌面瀏覽器），但兩邊
+  // 共用同一套邏輯模式，這裡一起改掉避免同一顆坑分岔成兩份程式碼。
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  // 2026-08-25：這裡原本是假的——不管鏡頭前面有沒有東西，固定等 1.2
+  // 秒就顯示「已對齊」，跟後端真的偵測結果常常對不起來。mobile 版
+  // （IdUploadScreen.tsx）已經改成真的定期取樣邊緣密度，桌面版卻一直
+  // 沒有跟著改，這是「桌面版身分證問題一樣沒解決」的原因之一——桌面版
+  // 使用者看到的「已對齊」指示燈其實從來沒有跟真實畫面有任何關係。
+  // 改成跟 mobile 版同一套邏輯：定期（350ms）取樣畫面中央區域，算
+  // 邊緣密度當作「這裡有沒有明顯邊界」的粗略指標。這不是跟後端一樣的
+  // Canny＋四邊形偵測，只是前端即時回饋用的粗略估計，真正的判斷還是
+  // 以拍照後送到後端的結果為準。
+  //
+  // 2026-08-25 修正：見 IdUploadScreen.tsx（mobile 版）同一段說明——
+  // 取樣區域原本寫死「畫面中央 70% 寬、45% 高」，但畫面上顯示的引導框
+  // 是 `w-[58%] max-w-[360px] aspect-[1.58/1]`，兩者對不起來，導致
+  // 使用者對準畫面上的框、實際取樣到的卻大半是框外背景，永遠亮不起
+  // 「已對齊」。改成直接量測引導框的實際像素位置。桌面版鏡頭畫面另外
+  // 有 `-scale-x-100` 鏡像（見上面 <video> 的說明，這裡刻意保留，不能
+  // 拿掉），換算取樣區域時要多考慮這個水平鏡像，不然取樣到的會是
+  // 引導框的鏡像位置、跟真人測試的表現完全對不起來。
   useEffect(() => {
-    let timer: any;
-    if (isCameraOpen) {
+    if (!isCameraOpen) {
       setIsCardAligned(false);
-      // Simulate detection: after 1.2 seconds, 4 corners turn green!
-      timer = setTimeout(() => {
-        setIsCardAligned(true);
-      }, 1200);
-    } else {
-      setIsCardAligned(false);
+      return;
     }
-    return () => clearTimeout(timer);
+    setIsCardAligned(false);
+
+    const SAMPLE_W = 64;
+    const SAMPLE_H = 40;
+    const EDGE_DENSITY_THRESHOLD = 18;
+
+    const interval = setInterval(() => {
+      const video = videoRef.current;
+      const container = videoContainerRef.current;
+      const guideBox = guideBoxRef.current;
+      if (!video || video.videoWidth === 0 || !container || !guideBox) return;
+
+      if (!scanCanvasRef.current) {
+        scanCanvasRef.current = document.createElement('canvas');
+      }
+      const canvas = scanCanvasRef.current;
+      canvas.width = SAMPLE_W;
+      canvas.height = SAMPLE_H;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+
+      const containerRect = container.getBoundingClientRect();
+      const guideRect = guideBox.getBoundingClientRect();
+      const scale = Math.max(containerRect.width / vw, containerRect.height / vh);
+      const displayedW = vw * scale;
+      const displayedH = vh * scale;
+      const offsetX = (displayedW - containerRect.width) / 2;
+      const offsetY = (displayedH - containerRect.height) / 2;
+
+      // 鏡像：畫面上看到的引導框左緣，對應到未鏡像原始畫面的右側，
+      // 所以左緣要用「容器寬度 - 引導框右緣」來換算，不是直接用左緣。
+      const guideLeftOnScreen = guideRect.left - containerRect.left;
+      const guideRightOnScreen = guideRect.right - containerRect.left;
+      const unmirroredLeft = containerRect.width - guideRightOnScreen;
+
+      const cropX = (unmirroredLeft + offsetX) / scale;
+      const cropY = (guideRect.top - containerRect.top + offsetY) / scale;
+      const cropW = guideRect.width / scale;
+      const cropH = guideRect.height / scale;
+      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, SAMPLE_W, SAMPLE_H);
+
+      let data: Uint8ClampedArray;
+      try {
+        data = ctx.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data;
+      } catch (_) {
+        return;
+      }
+
+      const gray = new Float32Array(SAMPLE_W * SAMPLE_H);
+      for (let i = 0; i < SAMPLE_W * SAMPLE_H; i++) {
+        const r = data[i * 4];
+        const g = data[i * 4 + 1];
+        const b = data[i * 4 + 2];
+        gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+      }
+
+      let edgeSum = 0;
+      let count = 0;
+      for (let y = 0; y < SAMPLE_H; y++) {
+        for (let x = 0; x < SAMPLE_W - 1; x++) {
+          edgeSum += Math.abs(gray[y * SAMPLE_W + x] - gray[y * SAMPLE_W + x + 1]);
+          count++;
+        }
+      }
+      for (let y = 0; y < SAMPLE_H - 1; y++) {
+        for (let x = 0; x < SAMPLE_W; x++) {
+          edgeSum += Math.abs(gray[y * SAMPLE_W + x] - gray[(y + 1) * SAMPLE_W + x]);
+          count++;
+        }
+      }
+
+      const edgeDensity = count > 0 ? edgeSum / count : 0;
+      setIsCardAligned(edgeDensity >= EDGE_DENSITY_THRESHOLD);
+    }, 350);
+
+    return () => clearInterval(interval);
   }, [isCameraOpen, cameraSide]);
 
   const startCamera = async (side: IdCardSide) => {
     setCameraSide(side);
     setIsCameraOpen(true);
     setIsCardAligned(false);
+    setCameraErrorMsg(null);
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -79,9 +190,18 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
           videoRef.current.srcObject = stream;
           videoRef.current.play();
         }
+      } else {
+        throw new Error('瀏覽器不支援相機 API');
       }
-    } catch (err) {
-      console.warn('Camera not directly accessible, fallback stream', err);
+    } catch (err: any) {
+      // 2026-08-25：原本這裡只有 console.warn，畫面上完全沒有任何提示
+      // ——鏡頭其實沒有啟動，但假的對齊計時器照樣會跑、拍照按鈕照樣
+      // 可以按，使用者完全看不出來鏡頭沒開，拍出來的自然是空畫面。
+      // 改成把錯誤顯示出來、關閉相機 modal，不要讓使用者對著一個沒有
+      // 真的在錄影的畫面按快門。
+      console.warn('Camera not directly accessible', err);
+      setCameraErrorMsg(err?.message || '未能取得相機權限，請確認瀏覽器已允許存取攝影機');
+      setIsCameraOpen(false);
     }
   };
 
@@ -95,8 +215,11 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
 
   const captureVideoFrameAsBlob = (): Promise<Blob | null> => {
     const video = videoRef.current;
+    if (!video || video.videoWidth === 0) return Promise.resolve(null);
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement('canvas');
+    }
     const canvas = canvasRef.current;
-    if (!video || !canvas || video.videoWidth === 0) return Promise.resolve(null);
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
@@ -216,6 +339,12 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
             <span>{rectifyError}</span>
           </div>
         )}
+        {cameraErrorMsg && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700 flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>相機無法啟動：{cameraErrorMsg}，請改用「上傳正面圖檔」</span>
+          </div>
+        )}
 
         {/* 2-Column Side by Side Layout for Desktop */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -260,7 +389,7 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
               <div className="relative w-full aspect-[16/10] rounded-2xl border border-slate-200 bg-slate-900 overflow-hidden flex items-center justify-center">
                 <img src={frontImage || '/id-card-sample.jpg'} alt="正面" className="w-full h-full object-cover" />
                 <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> OCR 已辨識
+                  <CheckCircle2 className="h-3 w-3" /> 資料辨識完成
                 </div>
               </div>
             )}
@@ -389,7 +518,6 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
           onChange={handleFileUpload}
           className="hidden"
         />
-        <canvas ref={canvasRef} className="hidden" />
 
         {/* Footer Next Button */}
         <div className="pt-4 border-t border-slate-100 flex items-center justify-between">
@@ -443,16 +571,21 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
               </div>
 
               {/* Viewfinder with 4 Corners */}
-              <div className="relative aspect-[16/10] w-full flex items-center justify-center overflow-hidden bg-slate-900">
+              <div ref={videoContainerRef} className="relative aspect-[16/10] w-full flex items-center justify-center overflow-hidden bg-slate-900">
                 <video
                   ref={videoRef}
                   autoPlay
                   playsInline
                   muted
+                  // 2026-08-24：桌面版沒有指定 facingMode，用的是筆電
+                  // 內建的前鏡頭，鏡像維持不變（符合直覺）。手機版
+                  // （IdUploadScreen.tsx）用 facingMode:'environment'
+                  // 後鏡頭拍證件才需要拿掉鏡像，兩邊鏡頭方向不一樣，
+                  // 不能套用同一個修法——這裡改錯過一次，已經修回來。
                   className="absolute inset-0 w-full h-full object-cover -scale-x-100"
                 />
 
-                <div className="relative w-[58%] max-w-[360px] aspect-[1.58/1] flex items-center justify-center pointer-events-none">
+                <div ref={guideBoxRef} className="relative w-[58%] max-w-[360px] aspect-[1.58/1] flex items-center justify-center pointer-events-none">
                   {/* Top-Left Corner */}
                   <div
                     className={`absolute top-0 left-0 w-6 h-6 rounded-tl-md border-t-[3.5px] border-l-[3.5px] transition-all duration-300 ${

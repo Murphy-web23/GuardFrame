@@ -56,6 +56,14 @@ export const VerificationDetailModal: React.FC<VerificationDetailModalProps> = (
               </span>
               <StatusBadge status={record.verificationStatus} size="sm" />
               <RiskBadge level={record.riskLevel} />
+              {record.riskScore !== undefined && (
+                <span className="flex items-center gap-1.5">
+                  <span className="text-xs font-mono font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                    風險分數 {record.riskScore}
+                  </span>
+                  <span className="text-[11px] text-slate-400">（分數越高風險越大）</span>
+                </span>
+              )}
             </div>
             <h2 className="text-lg font-black text-slate-900 mt-2">
               案件身分核驗詳細報告

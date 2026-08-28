@@ -50,6 +50,7 @@ function mapBackendRecord(rec: BackendVerificationRecord): VerificationRecord {
     timestamp: rec.timestamp,
     verificationStatus: statusMap[rec.decision.verdict] || 'pending',
     riskLevel,
+    riskScore: rec.decision.riskScore,
     method: `身分證 + 人臉活體（${rec.sourceType}）`,
     handlingStatus,
     durationSec: Math.round(rec.recording.durationSec),

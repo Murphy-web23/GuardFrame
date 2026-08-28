@@ -18,20 +18,43 @@ import numpy as np
 
 import config
 
+# 2026-08-25：真人測試發現伺服器記憶體在連續跑幾輪驗證後被榨乾到只剩
+# 幾百 MB（見 PHASE1_NOTES §10.1 記錄過的架構債），追出來每次
+# analyze_occlusion() 都重新從硬碟載入一整組 buffalo_l 模型（1k3d68、
+# 2d106det、det_10g、genderage、w600k_r50 五個 ONNX），不只慢、還會讓
+# 記憶體越用越多。跟下面 docstring 說的一樣，InsightFace 偵測本身是
+# 無狀態的（不像 common/landmarks.py 的 MediaPipe VIDEO 模式那樣有跨
+# 影格 timestamp 依賴），所以在「一次呼叫內」建立一次沒問題，但沒有
+# 理由每次呼叫都重新建——改成模組層級快取，整個伺服器行程只載入一次，
+# 之後所有請求共用同一個實例。image_utils/quality.py 的
+# _get_face_app() 已經是這個寫法，這裡跟著補上。
+_face_analyzer = None
+_face_analyzer_failed = False
+
 
 def _create_face_analyzer():
-    """建立 InsightFace FaceAnalysis 實例。
+    """取得（必要時建立）快取的 InsightFace FaceAnalysis 實例。
 
     跟 common/landmarks.py 的 MediaPipe wrapper 不同，InsightFace 的偵測
     是無狀態的——每張影格獨立偵測，沒有 MediaPipe VIDEO 模式那種跨影格
-    timestamp 依賴——所以在一次 analyze_occlusion() 呼叫裡建立一次、
-    重複用在所有影格上是安全的，不會有 Track 2 踩過的那種快取 bug。
+    timestamp 依賴——所以快取成模組層級的全域變數、跨請求重複使用是
+    安全的，不會有 Track 2 踩過的那種快取 bug（見上面模組說明）。
     """
+    global _face_analyzer, _face_analyzer_failed
+
+    if _face_analyzer is not None or _face_analyzer_failed:
+        return _face_analyzer
+
     from insightface.app import FaceAnalysis
 
-    app = FaceAnalysis(name="buffalo_l")
-    app.prepare(ctx_id=config.INSIGHTFACE_CTX_ID, det_size=config.INSIGHTFACE_DET_SIZE)
-    return app
+    try:
+        app = FaceAnalysis(name="buffalo_l")
+        app.prepare(ctx_id=config.INSIGHTFACE_CTX_ID, det_size=config.INSIGHTFACE_DET_SIZE)
+        _face_analyzer = app
+    except Exception:
+        _face_analyzer_failed = True
+
+    return _face_analyzer
 
 
 def extract_face_data(frames):
@@ -112,20 +135,46 @@ def compute_stability_curve(face_data):
     return curve
 
 
-def valid_transition_similarities(face_data):
+def valid_transition_similarities(face_data, occlusion_segments=None):
     """依「有效偵測」的先後順序算相似度，跳過缺格而不是被缺格打斷。
 
     這是遮擋層真正的判定依據。遮擋層最有價值的比較是「遮擋前最後一格」
     對「遮擋後第一格」——如果只比較嚴格相鄰的原始影格索引，完全遮住
     的那段會產生一整串「沒資料」，反而漏掉這個最關鍵的跨遮擋比較。
 
+    2026-08-26：真人測試發現 maxIdentityDrop 就算是真人也常常量到
+    0.84~1.00 的高值，追出根因：「有沒有偵測到臉」不等於「這格的
+    embedding 可信」。手正在揮過臉前面、只蓋住半張臉的那些影格，
+    InsightFace 偵測信心（det_score）實測仍然有 0.5~0.9（不算低），
+    但辨識用的 embedding 是拿被手指遮住一部分的裁切去算的，跟正常
+    可信的 embedding 差很多——直接拿真人測試資料驗證過：最低相似度
+    的那幾筆轉換（例如 0.10、0.16、0.19），影格索引幾乎都精準落在
+    hand_tracking.py 的 detect_wave_cycles() 早就算出來的「手正蓋在
+    臉部參考框內」那幾段區間裡面。原本的邏輯只看「有沒有偵測到臉」，
+    沒有排除這些「有偵測到、但手正蓋著、embedding 不可信」的影格，
+    這正是文件開頭說的「遮擋前最後一格對遮擋後第一格」精神沒有真的
+    被落實——現在補上：额外把落在 occlusion_segments 範圍內的影格
+    也當作無效（跟真的沒偵測到臉一樣處理），才會真的比較「手蓋上去
+    之前」跟「手離開之後」，而不是連手蓋著臉那段裡面本身雜訊很大的
+    轉換都算進去。
+
     參數:
         face_data: list[dict | None]
+        occlusion_segments: list[[int, int]] | None，hand_tracking.py
+            detect_wave_cycles() 的輸出，每筆是手蓋在臉部參考框內的
+            [進入影格索引, 離開影格索引]（含頭尾）。None 時退回舊行為
+            （只看有沒有偵測到臉），供沒有手部資料的呼叫端相容用。
     回傳:
         list[(int, float)]，每筆是（較晚那格的原始索引, 相似度），
         依索引順序排列。少於兩格有效偵測時回傳空 list
     """
-    valid_indices = [i for i, d in enumerate(face_data) if d is not None]
+    excluded = set()
+    for start, end in occlusion_segments or []:
+        excluded.update(range(start, end + 1))
+
+    valid_indices = [
+        i for i, d in enumerate(face_data) if d is not None and i not in excluded
+    ]
     transitions = []
     for prev_i, cur_i in zip(valid_indices, valid_indices[1:]):
         sim = cosine_similarity(

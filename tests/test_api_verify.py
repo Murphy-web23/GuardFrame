@@ -12,6 +12,7 @@ import json
 import secrets
 import shutil
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -58,7 +59,15 @@ def _ensure_tables():
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    # 2026-08-25：/verify 改成非同步後，背景分析靠 asyncio.create_task()
+    # 在同一個事件迴圈裡繼續跑（見 api/routes.py verify() 的說明）。
+    # TestClient 沒有用 `with` 包起來的話，每一次 .get()/.post() 呼叫
+    # 都會各自開一個新的 portal/event loop、用完就整個關掉——fire-and-
+    # forget 的背景 task 還沒機會執行就被砍了，輪詢永遠只看得到
+    # 404「尚未有任何驗證紀錄」。用 `with` 讓同一個 TestClient 底下的
+    # 所有請求共用同一個持續存在的事件迴圈，背景 task 才有機會真的跑。
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 # fps 刻意用得比真實的 30 低，讓測試影片格數少一點、跑快一點，
@@ -142,11 +151,16 @@ def _build_payload():
         {"action": "turn_right", "durationSec": _DURATIONS["turn_right"]},
         {"action": "wave_hand", "durationSec": _DURATIONS["wave_hand"]},
     ]
-    action_end = _ACTION_FRAMES - 1
-    lighting_start = _ACTION_FRAMES
-    lighting_end = _ACTION_FRAMES + _LIGHTING_FRAMES - 1
-    occlusion_start = _ACTION_FRAMES - _WAVE_HAND_FRAMES
-    occlusion_end = action_end
+
+    # 2026-08-27：phases 現在是毫秒區間（不是影格索引），後端用真實
+    # fps 換算成影格，見 common/schemas.py RecordingPhases、
+    # api/routes.py _ms_range_to_frame_range() 的說明。這裡的毫秒值
+    # 換算回 _TEST_FPS=5.0 時，要能重現原本測試預期的影格範圍
+    # （action=[0,99]、lighting=[100,114]、occlusion=[65,99]），
+    # 才不會影響這幾個測試原本驗證的東西。
+    action_end_ms = _ACTION_FRAMES / _TEST_FPS * 1000  # 20000
+    lighting_end_ms = (_ACTION_FRAMES + _LIGHTING_FRAMES) / _TEST_FPS * 1000  # 23000
+    occlusion_start_ms = (_ACTION_FRAMES - _WAVE_HAND_FRAMES) / _TEST_FPS * 1000  # 13000
 
     challenges_payload = {
         "challenges": challenges,
@@ -155,9 +169,9 @@ def _build_payload():
             "fps": _TEST_FPS,
             "totalFrames": _ACTION_FRAMES + _LIGHTING_FRAMES,
             "phases": {
-                "action": [0, action_end],
-                "lighting": [lighting_start, lighting_end],
-                "occlusion": [occlusion_start, occlusion_end],
+                "action": [0, action_end_ms],
+                "lighting": [action_end_ms, lighting_end_ms],
+                "occlusion": [occlusion_start_ms, action_end_ms],
             },
         },
     }
@@ -313,8 +327,35 @@ def test_verify_full_pipeline_writes_record_when_quality_passes(
             headers=session_headers,
         )
 
-    assert response.status_code == 200
-    body = response.json()
+    # 2026-08-25：/verify 改成非同步（先回應 202「處理中」，五層分析
+    # 在背景執行緒跑，見 api/routes.py 的 _run_verify_analysis()），
+    # 避免同步等待數十秒到數分鐘被 proxy 判定逾時掐斷連線。這裡改成
+    # 先確認立即回應是 202 確認格式，再輪詢 GET /verify-result 直到
+    # 背景分析真的寫進資料庫為止。
+    assert response.status_code == 202
+    ack = response.json()
+    assert ack == {"status": "processing", "applicantId": applicant_id}
+
+    # 2026-08-25：原本只等 10 秒（100 次 × 0.1 秒），真人測試才發現這個
+    # 測試環境背景分析（InsightFace 每次都重新從硬碟載入模型，沒有
+    # 快取，見 api/routes.py verify() 附近的說明）實測可能要兩分鐘以上
+    # ——10 秒太短，會在分析根本沒跑完前就判定測試失敗。拉長到最多
+    # 3 分鐘，跟 frontend/src/api/client.ts 的 waitForVerifyResult()
+    # 預設逾時（5 分鐘）同一個量級。
+    body = None
+    for _ in range(360):
+        poll = client.get(
+            f"/api/applicants/{applicant_id}/verify-result",
+            headers=session_headers,
+        )
+        assert poll.status_code == 200
+        poll_body = poll.json()
+        if poll_body["status"] == "done":
+            body = poll_body["record"]
+            break
+        assert poll_body["status"] == "processing"
+        time.sleep(0.5)
+    assert body is not None, "背景驗證分析在等待時間內沒有完成"
 
     # 回傳格式：camelCase、§5.1 的完整結構
     assert body["applicantIdMasked"] == "C56****321"

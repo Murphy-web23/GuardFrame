@@ -55,6 +55,7 @@ GuardFrame：銀行 B2B 驗證引擎，嵌入數位開戶流程，針對**即時
 | 人臉偵測、對齊、身分嵌入 | InsightFace（SCRFD + ArcFace） | DeepFace、dlib、face_recognition |
 | 臉部與手部關鍵點 | MediaPipe | dlib 68 點 |
 | 影像處理 | OpenCV | PIL 為主的方案 |
+| 證件角點偵測（§4.7，僅限此用途） | YOLO11n-pose（Ultralytics，自訓練 4 點 keypoint 模型），純古典 CV（Canny＋輪廓）為自動 fallback，兩者並存 | 不做一般物件偵測；不用更大量級的 YOLO 模型（CPU 推論考量） |
 | 訊號處理 | SciPy | 自行實作 FFT |
 | 深度學習 | PyTorch | TensorFlow |
 | 視覺基礎模型（Track 1，見 §3.2） | google/siglip2-base-patch16-224（**凍結**，現行主線） | 從頭訓練 CNN、Xception 微調 |
@@ -383,9 +384,21 @@ def rectify_id_card(image: np.ndarray) -> dict:
         }
 
     實作要點:
-        - 灰階 → 高斯模糊 → Canny → findContours → 依面積排序
-        - approxPolyDP 逼近四邊形，須確認頂點數為 4
-        - 角點依左上/右上/右下/左下排序後才能做透視變換
+        - 2026-08-28 起改為雙路徑，優先用 YOLO11n-pose（自訓練，4 個
+          角點當 keypoint 直接學）偵測四角；模型不可用、偵測不到、
+          或信心低於 config.ID_CARD_ML_MIN_CONFIDENCE 時，自動退回
+          原本的古典 CV 路徑（灰階 → 高斯模糊 → Canny → 膚色遮罩濾除
+          → findContours → 依面積排序 → approxPolyDP 逼近四邊形 →
+          依形心角度排序四角），兩條路徑都保留，用
+          config.ID_CARD_USE_ML_DETECTOR 開關切換，細節見
+          id_card_detector/README.md 與 image_utils/id_card.py 內的
+          說明
+        - 改用 ML 路徑的理由：古典方法對「手指蓋住卡片一角」這種遮擋
+          情況天生做不到「猜出被遮住的角落在哪」，因為 Canny 在那個
+          角落完全沒有邊界資訊可用；YOLO-pose 是從整張卡片形狀學出來的
+          關鍵點模型，可以依其餘三個角與卡片比例推斷被遮住的角落座標
+        - 兩條路徑找到角點後的後續步驟共用：角點須排序為左上/右上/
+          右下/左下才能做透視變換
         - 找不到四邊形時，rectified 與 corners 皆回傳 None，success=False，
           並附上清楚的 message（例如「未偵測到證件邊界，請重新拍攝」），
           前端僅顯示此訊息，不顯示任何影像。不可拋例外
@@ -866,6 +879,14 @@ guardframe/
 │   ├── id_card.py              ← 對外入口：rectify_id_card()
 │   └── quality.py              ← 對外入口：check_image_quality()
 │
+├── id_card_detector/           ← B 專屬，證件角點 YOLO-pose 模型
+│   ├── dataset/                ← 訓練圖片與標註（不進 git，.gitkeep 保留結構）
+│   ├── weights/best.pt         ← 訓練好的權重（不進 git）
+│   ├── train_colab.ipynb       ← 訓練 notebook
+│   ├── convert_cvat_to_yolo.py ← 標註格式轉換工具
+│   ├── test_model.py           ← 驗證用一次性腳本，非正式系統一部分
+│   └── README.md               ← 標註格式、訓練指令、與 id_card.py 的接法
+│
 ├── common/                     ← 共用，修改前須告知對方
 │   ├── __init__.py
 │   ├── face_utils.py           ← 抽影格、InsightFace 偵測與對齊
@@ -902,7 +923,7 @@ guardframe/
 | 資料夾 | 誰可以改 |
 |---|---|
 | `track1_synthetic/`、`vlm_summary/` | 只有 A |
-| `track2_rppg/`、`track3_photometric/`、`track4_occlusion/`、`baseline_challenge/`、`image_utils/`、`api/`、`frontend/` | 只有 B |
+| `track2_rppg/`、`track3_photometric/`、`track4_occlusion/`、`baseline_challenge/`、`image_utils/`、`id_card_detector/`、`api/`、`frontend/` | 只有 B |
 | `common/`、`config.py` | 兩人皆可，但**修改前必須先講一聲** |
 
 `common/` 是最容易產生衝突的地方。要改先問對方。

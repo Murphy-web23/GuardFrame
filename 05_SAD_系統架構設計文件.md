@@ -393,8 +393,10 @@ def rectify_id_card(image: np.ndarray) -> dict:
         }
 
     實作要點:
-        - 灰階 → 高斯模糊 → Canny → findContours → 依面積排序
-        - approxPolyDP 逼近四邊形，須確認頂點數為 4
+        - 雙路徑：優先用自訓練的 YOLO11n-pose keypoint 模型直接偵測
+          四個角點（可處理手指遮擋角落的情況）；模型不可用或信心不足
+          時，自動退回古典路徑（灰階 → 高斯模糊 → Canny → findContours
+          → 依面積排序 → approxPolyDP 逼近四邊形）
         - 角點依左上/右上/右下/左下排序後才能做透視變換
         - 找不到四邊形時，rectified 與 corners 皆回傳 None，success=False，
           並附上清楚的 message（例如「未偵測到證件邊界，請重新拍攝」），

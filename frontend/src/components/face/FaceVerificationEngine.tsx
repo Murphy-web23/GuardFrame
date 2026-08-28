@@ -19,13 +19,13 @@ import {
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react';
-import { getChallengeOrder, verifyFace, ApiError, ChallengeOrderItem } from '../../api/client';
+import { getChallengeOrder, verifyFace, ApiError, ChallengeOrderItem, RecordingPhases } from '../../api/client';
+import { MOBILE_AUDIO_CUE_ACTION, MOBILE_AUDIO_CUE_SUCCESS } from '../../utils/mobileAudioCues';
 import {
   ACTION_DURATIONS_SEC,
   RECORDING_FPS,
   generateLightLog,
   lightLogDurationMs,
-  msRangeToFrameRange,
   msToFrame,
 } from '../../utils/verificationRecording';
 
@@ -82,27 +82,48 @@ export const CHALLENGE_MAP: Record<ChallengeType, ChallengeConfig> = {
   },
   wave: {
     type: 'wave',
-    title: '請在臉部前方揮手至少 2 次',
-    sub: '在臉部前方左右自然揮動手部至少兩次',
+    title: '請將手抬至臉前揮手至少 2 次',
+    sub: '將手抬到臉的高度，前後揮動至少兩次',
     // 7 秒，對應後端 config.BASELINE_ACTION_DURATIONS['wave_hand']。
     // 這裡原本寫 5 秒，跟後端對不起來——揮手這段同時也是 Track 4
     // 遮擋分析要用的區間（phases.occlusion），時長算錯會讓後端切出
     // 錯誤的影格範圍，見 verificationRecording.ts 的說明。
+    //
+    // 2026-08-27：原本文案「請在臉部前方揮手」容易被誤解成一般打招呼
+    // 的揮手（手在肩膀/頭部旁邊擺動），但後端 baseline_challenge/
+    // analyzer.py 的 _check_wave_hand() 跟 Track4 的遮擋偵測用的是
+    // 同一套邏輯（common/hand_tracking.py detect_wave_cycles()），
+    // 判定的是「手部座標有沒有真的進到臉部框範圍內」，不是單純有
+    // 揮手動作。真人測試（申請人937）就踩到這個問題：手拉遠揮手打
+    // 招呼，兩層判定都算 0 次遮擋循環直接失敗。改成更明確的說法。
     durationSec: ACTION_DURATIONS_SEC.wave_hand,
-    voiceText: '請在臉部前方揮手至少兩次。',
+    voiceText: '請將手抬至臉前揮手至少兩次。',
     icon: Hand,
     emoji: '👋',
   },
 };
 
+// 2026-08-27：真人測試發現 Track 3 光照相關係數連續好幾次都量到 0
+// （925、935、969），追出根因：這個緩衝時間原本只加在送給後端的
+// phases.lighting 影格範圍上（見下面 processing 階段的說明），但真正
+// 停止錄影的計時器（見 track3_photometric 那個 useEffect）沒有跟著
+// 延長——影片實際錄到的長度剛好在 lightingEndMs 那一刻就結束，後端
+// 卻被告知燈光階段一路延伸到 lightingEndMs + 這段緩衝，要求的影格
+// 範圍必然超出影片實際長度，correlation 自然算不出來（不是雜訊、
+// 是系統性地每次都會發生）。現在提升成模組層級常數，兩處都要用
+// 同一個值，才能讓「錄影實際停止的時間」跟「告訴後端的影格範圍」
+// 對得上。
+const LIGHTING_BUFFER_MS = 400;
+
 interface FaceVerificationEngineProps {
   applicantId: number;
   sessionId: string;
-  onVerificationComplete: (
-    confidence: number,
-    photometricPassed?: boolean,
-    verdict?: 'pass' | 'review'
-  ) => void;
+  // 2026-08-25：/verify 改非同步後，錄影上傳完當下只知道「送出成功」，
+  // 還不知道真正 verdict（後端還在背景跑五層分析）——這裡不再回傳
+  // confidence/verdict 這些要等分析跑完才有的值，見 client.ts
+  // waitForVerifyResult() 的說明，真正的結果留到 TermsSubmitScreen
+  // 送出開戶設定前才輪詢取得。
+  onVerificationComplete: () => void;
   onProceedNext: () => void;
   isDesktop?: boolean;
 }
@@ -147,6 +168,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
   const lastSpokenKeyRef = useRef<string>('');
   const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  // 2026-08-25：手機版動作提示音改用 <audio> 元素（見
+  // ../../utils/mobileAudioCues.ts 的說明），跟桌面版的 AudioContext
+  // 方案完全分開、互不影響。
+  const mobileActionAudioRef = useRef<HTMLAudioElement | null>(null);
+  const mobileSuccessAudioRef = useRef<HTMLAudioElement | null>(null);
   const availableVoicesRef = useRef<SpeechSynthesisVoice[]>([]);
 
   // Camera feed states
@@ -173,14 +199,16 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
     actionPhaseEndMs: number;
     lightLog: ReturnType<typeof generateLightLog> | null;
     totalMs: number;
-  }>({ boundaries: [], actionPhaseEndMs: 0, lightLog: null, totalMs: 0 });
+    // 2026-08-25：見下面 track3_photometric 那個 useEffect 的說明——
+    // 這裡多存一個「照明階段實際幾毫秒後才真的開始播放」的量測值，跟
+    // actionPhaseEndMs（事先算好的理論值）分開，因為兩者被證實對不
+    // 起來，會讓 Track 3 的相關係數失真。
+    actualLightingStartMs: number | null;
+  }>({ boundaries: [], actionPhaseEndMs: 0, lightLog: null, totalMs: 0, actualLightingStartMs: null });
+  // 錄影真正開始的時間點（recorder.start() 當下的 performance.now()），
+  // 用來量測「動作階段實際跑了多久才真的進入照明階段」。
+  const recordingStartPerfMsRef = useRef<number>(0);
   const [verifyError, setVerifyError] = useState<string>('');
-  const [decisionSummary, setDecisionSummary] = useState<{
-    verdict: 'pass' | 'review' | 'reject';
-    verdictLabel: string;
-    riskScore: number;
-    reasons: string[];
-  } | null>(null);
 
   // 掛載時跟後端要伺服器指派的隨機挑戰順序（§5.3／PHASE1_NOTES §九），
   // 不是前端自己 Math.random() 排——這是「隨機順序」這個安全機制真正
@@ -268,6 +296,21 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
     } catch (_) {}
   };
 
+  // 2026-08-25：手機版動作提示音改走 <audio> 元素（見
+  // ../../utils/mobileAudioCues.ts 開頭的說明——AudioContext 方案在真人
+  // 測試裡兩次都沒解決手機聽不到提示音的問題，使用者同意不用跟桌面版
+  // 同一種音效，找一個能用的就好）。'wave' 目前借用跟 'action' 一樣的
+  // 音檔，不是遺漏，只是沒有另外合成第三種音效，感受上差異不大。
+  const playMobileAudioCue = (type: 'action' | 'success' | 'wave') => {
+    if (!voiceEnabled || typeof window === 'undefined') return;
+    try {
+      const audio = type === 'success' ? mobileSuccessAudioRef.current : mobileActionAudioRef.current;
+      if (!audio) return;
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+    } catch (_) {}
+  };
+
   // Web Speech API Voice Prompt Helper (with GC retention, delay safeguard & voice selection)
   const speakPrompt = (text: string, uniqueKey: string) => {
     if (!voiceEnabled) return;
@@ -275,11 +318,13 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
     lastSpokenKeyRef.current = uniqueKey;
 
-    // 1. Play audible synthesizer cue tone immediately
-    if (uniqueKey === 'verification_success' || uniqueKey === 'track3_completed') {
-      playAudioCue('success');
+    // 1. Play audible synthesizer cue tone immediately（手機/桌面分開
+    // 實作，見 playMobileAudioCue() 的說明，桌面版這裡完全不動）
+    const cueType = uniqueKey === 'verification_success' || uniqueKey === 'track3_completed' ? 'success' : 'action';
+    if (isDesktop) {
+      playAudioCue(cueType);
     } else {
-      playAudioCue('action');
+      playMobileAudioCue(cueType);
     }
 
     // 2. Play Web Speech API Spoken Voice
@@ -300,7 +345,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
           }
           const utterance = new SpeechSynthesisUtterance(text);
           utterance.lang = 'zh-TW';
-          utterance.rate = 1.05;
+          // 2026-08-24：桌面版維持原本的 1.05 不變（明確要求禁止更改）。
+          // 手機版語音聽起來偏快，同樣的 rate 數值在不同裝置的原生 TTS
+          // 引擎上基準語速不同，手機端另外調低。只在這裡分流，其餘
+          // speakPrompt() 邏輯兩邊完全共用、沒有其他改動。
+          utterance.rate = isDesktop ? 1.05 : 0.85;
           utterance.pitch = 1.0;
           utterance.volume = 1.0;
 
@@ -454,22 +503,33 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         if (currentType === 'wave') {
           if (countdown === 3) {
             setWaveCount(1); // First wave completed
-            playAudioCue('wave');
+            if (isDesktop) playAudioCue('wave'); else playMobileAudioCue('wave');
           } else if (countdown === 1) {
             setWaveCount(2); // Second wave completed
-            playAudioCue('wave');
+            if (isDesktop) playAudioCue('wave'); else playMobileAudioCue('wave');
           }
         }
 
         if (countdown > 0) {
           setCurrentCountdown(countdown);
-        } else if (countdown === 0) {
+        } else {
+          // 2026-08-26：countdown 歸零與「換下一個動作」原本分兩個 tick
+          // 處理（歸零這個 tick 只顯示 completed，要再等一次 1000ms 的
+          // tick 讓 countdown 變成 -1 才真的 clearInterval），導致每個
+          // 動作實際多播了 1 秒，四個動作累積下來錄影總長變成約 26 秒，
+          // 不是設計的 23 秒。改成同一個 tick 內完成「顯示完成」與
+          // 「切換下一步」兩件事。
           setCurrentCountdown(0);
           if (currentType === 'wave') {
             setWaveCount(2);
           }
           setChallengeState('completed');
-        } else if (countdown <= -1) {
+          // 2026-08-24：手機版動作結束時原本沒有任何提示音，只有等下一個
+          // 動作開始時的提示才會有聲音，體驗上像是「完成」沒有被提示到。
+          // 只加在手機版（!isDesktop），桌面版維持原樣、不動任何一行。
+          if (!isDesktop) {
+            playMobileAudioCue('action');
+          }
           clearInterval(timer);
           if (currentChallengeIndex < activeSequence.length - 1) {
             setCurrentChallengeIndex((prev) => prev + 1);
@@ -494,8 +554,52 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
       setOverallStage('processing');
       return;
     }
+
+    // 2026-08-25：真人測試回報 Track 3 correlation 量不到，追問後使用者
+    // 確認根因：如果隨機順序把 turn_left/turn_right 排在最後一個動作
+    // 挑戰，語音提示一結束照明序列就立刻開始播放，使用者根本來不及把
+    // 臉轉回正面，量到的是側臉反光，跟演算法預期「正面迎向螢幕」的
+    // 反光模式完全不同。**原本在這裡加一段緩衝時間讓使用者轉回來，但
+    // 使用者提出更好的做法**：與其拉長影片、拖慢後續分析，不如直接在
+    // 挑戰順序洗牌時規定「最後一個動作永遠是 blink 或 wave_hand」（見
+    // api/routes.py get_challenge_order() 的說明）——這兩個動作都不會
+    // 讓頭轉離鏡頭，從源頭排除問題，不需要犧牲影片長度。這裡維持原本
+    // 沒有緩衝的寫法。
     speakPrompt('請保持臉部不動。', 'track3_holding');
     setPhotoSubState('analyzing');
+
+    // 2026-08-28：真人測試發現 Track3 correlation 持續量不到（不是動作
+    // 問題，使用者這幾次都沒動）——把實際光照曲線拉出來看，發現螢幕
+    // 燈光是階梯狀瞬間跳變，但臉部反射曲線卻是平滑的單一起伏，完全
+    // 沒跟著跳變走。懷疑是手機鏡頭的自動曝光/自動白平衡在偵測到亮度
+    // 變化時會主動「拉平」畫面亮度（花 0.5~2 秒調整），這正好把我們
+    // 想量的訊號本身撫平掉了。這裡嘗試在進入照明測試前鎖定曝光/白
+    // 平衡在目前的值，減少鏡頭自己介入的干擾。**只有 Chrome/Android
+    // 系瀏覽器支援這組 MediaTrackConstraints，iOS Safari 完全不支援
+    // 、規格明文規定不支援的約束會被悄悄忽略、不會報錯**——這是已知
+    // 的平台限制，iOS 手機不會因此變差，但也不會變好。
+    try {
+      const videoTrack = streamRef.current?.getVideoTracks()[0];
+      const supported = navigator.mediaDevices.getSupportedConstraints() as Record<string, boolean>;
+      if (videoTrack) {
+        if (supported.exposureMode) {
+          (videoTrack.applyConstraints({ advanced: [{ exposureMode: 'manual' } as any] }) as Promise<void>).catch(() => {});
+        }
+        if (supported.whiteBalanceMode) {
+          (videoTrack.applyConstraints({ advanced: [{ whiteBalanceMode: 'manual' } as any] }) as Promise<void>).catch(() => {});
+        }
+      }
+    } catch (_) {
+      // 鎖定失敗（裝置/瀏覽器不支援）不影響主流程，安靜略過即可。
+    }
+
+    // 2026-08-25：phases.lighting 送給後端的影格範圍要用「照明序列真正
+    // 開始播放」那一刻實測的經過時間，不用事先算好的理論值，兩者常常
+    // 對不上、會讓相關係數失真。
+    if (recordingStartPerfMsRef.current > 0) {
+      timelineRef.current.actualLightingStartMs = performance.now() - recordingStartPerfMsRef.current;
+    }
+
     const totalLightMs = lightLogDurationMs(lightLog);
     const phaseStart = performance.now();
     setCurrentLightSegmentIndex(0);
@@ -509,21 +613,47 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
       setPhotoCountdown(Math.max(0, Math.ceil((totalLightMs - elapsed) / 1000)));
     }, 50);
 
+    // 2026-08-27：真的停止錄影要比燈光序列播完再晚 LIGHTING_BUFFER_MS
+    // ——下面 processing 階段送給後端的 phases.lighting 影格範圍，尾端
+    // 會多加這段緩衝（見那邊的說明），如果這裡錄影提早停止，後端要求
+    // 的影格範圍會超出影片實際長度，correlation 永遠算不出來（見這個
+    // 常數宣告處的說明）。UI 上的語音提示／倒數還是照 totalLightMs
+    // 結束，使用者不會感覺錄影變長，只是多錄了 0.4 秒沒人會注意到的
+    // 尾巴。
     const endTimer = setTimeout(() => {
       clearInterval(tick);
       speakPrompt('照明響應驗證完成。', 'track3_completed');
       setPhotoSubState('completed');
+    }, totalLightMs);
+
+    const stopRecordingTimer = setTimeout(() => {
+      // 照明測試階段結束，把鏡頭曝光/白平衡改回自動——鎖定只是為了
+      // 這段測試不被鏡頭自己的調整干擾，不該影響後續任何畫面。
+      try {
+        const videoTrack = streamRef.current?.getVideoTracks()[0];
+        const supported = navigator.mediaDevices.getSupportedConstraints() as Record<string, boolean>;
+        if (videoTrack) {
+          if (supported.exposureMode) {
+            (videoTrack.applyConstraints({ advanced: [{ exposureMode: 'continuous' } as any] }) as Promise<void>).catch(() => {});
+          }
+          if (supported.whiteBalanceMode) {
+            (videoTrack.applyConstraints({ advanced: [{ whiteBalanceMode: 'continuous' } as any] }) as Promise<void>).catch(() => {});
+          }
+        }
+      } catch (_) {}
+
       // 停止錄影，onstop（在下面的 processing effect 裡等待）會 flush
       // 出最後一段資料，接著才真的組 payload 呼叫 /verify。
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
       setOverallStage('processing');
-    }, totalLightMs);
+    }, totalLightMs + LIGHTING_BUFFER_MS);
 
     return () => {
       clearInterval(tick);
       clearTimeout(endTimer);
+      clearTimeout(stopRecordingTimer);
     };
   }, [overallStage]);
 
@@ -549,7 +679,19 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         };
       });
 
-      const { boundaries, actionPhaseEndMs, lightLog, totalMs } = timelineRef.current;
+      // 2026-08-25：真人測試發現手機瀏覽器（推測是 iOS Safari 的
+      // MediaRecorder 相容性問題）錄出來的檔案可能是 0 位元組，直接
+      // 上傳的話後端只會回報「無法開啟影片檔」，看不出真正原因。這裡
+      // 先擋下來，給使用者跟診斷都更明確的訊息，不要讓空檔案送出去。
+      if (videoBlob.size === 0) {
+        setVerifyError(
+          '錄影失敗，沒有取得到任何影片資料，可能是瀏覽器不支援目前的錄影設定，請重新錄製，若持續發生請改用其他瀏覽器再試一次'
+        );
+        setOverallStage('error');
+        return;
+      }
+
+      const { boundaries, actionPhaseEndMs, lightLog, totalMs, actualLightingStartMs } = timelineRef.current;
       if (cancelled) return;
       if (!lightLog || boundaries.length === 0) {
         setVerifyError('錄影資料不完整，請重新錄製');
@@ -557,17 +699,52 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         return;
       }
 
+      // 2026-08-25：lighting 階段的邊界改用 actualLightingStartMs
+      // （track3_photometric 那個 useEffect 真正開始執行時量到的實際
+      // 經過時間），不用 actionPhaseEndMs 這個事先算好的理論值——見
+      // 那邊的說明，兩者常常對不上，會讓 Track 3 相關係數失真。
+      // actualLightingStartMs 理論上一定會有值（handleStartVerification
+      // 一定會先設定 recordingStartPerfMsRef，track3 階段一定會執行
+      // 到），null 只是防禦性的 fallback，退回舊的理論值。
+      const lightingStartMs = actualLightingStartMs ?? actionPhaseEndMs;
+
+      // 2026-08-25：即使改用實測的 lightingStartMs，真人測試發現
+      // correlation 還是會在不同次錄影間大幅波動（0.581／0.388／0.174）
+      // ——因為切片是「剛好卡在理論時長邊界」，只要當次的實際延遲比量到
+      // 的還多一點點，燈光序列尾端的畫面就會被整段切掉、後端完全沒有
+      // 那幾格可以比對，訊號永久遺失，不是單純的雜訊。在頭尾各加一段
+      // 緩衝時間，確保就算還有殘餘誤差，真正的燈光序列還是完整落在送
+      // 出的影格範圍內。多送出來的緩衝影格無害：
+      // track3_photometric/sequence.py 的 light_intensity_at() 本來就會
+      // 把序列時間範圍外的時刻視為「第一段」或「最後一段」的亮度，
+      // 不會產生假的訊號跳動。
+      const lightingEndMs = lightingStartMs + lightLogDurationMs(lightLog);
+
+      // 2026-08-27：phases 直接送毫秒，不在前端換算成影格索引——真人
+      // 測試（申請人970）發現裝置實際錄影 fps 常常達不到假設的固定
+      // 30fps（該次只有 24.4fps），前端算好的影格範圍會超出影片實際
+      // 長度。換算這一步移到後端做，用解碼後量到的真實 fps，見
+      // common/schemas.py RecordingPhases 的說明。
       const waveHandBoundary = boundaries.find((b) => b.action === 'wave_hand');
-      const phases = {
-        action: msRangeToFrameRange(0, actionPhaseEndMs),
-        lighting: msRangeToFrameRange(actionPhaseEndMs, actionPhaseEndMs + lightLogDurationMs(lightLog)),
+      const phases: RecordingPhases = {
+        action: [0, lightingStartMs],
+        lighting: [
+          Math.max(0, lightingStartMs - LIGHTING_BUFFER_MS),
+          lightingEndMs + LIGHTING_BUFFER_MS,
+        ],
         occlusion: waveHandBoundary
-          ? msRangeToFrameRange(waveHandBoundary.startMs, waveHandBoundary.endMs)
-          : msRangeToFrameRange(0, actionPhaseEndMs),
+          ? [waveHandBoundary.startMs, waveHandBoundary.endMs]
+          : [0, lightingStartMs],
       };
 
       try {
-        const record = await verifyFace(applicantId, sessionId, videoBlob, lightLog, {
+        // 2026-08-25：verifyFace() 現在只回傳「已收到、背景處理中」的
+        // 202 確認，不會等到五層分析全部跑完（實測數十秒到數分鐘）才
+        // 回應——避免使用者被晾在這個畫面等太久，也避免 Cloudflare
+        // Tunnel 這類 proxy 中途判定逾時掐斷連線。真正的 verdict（pass
+        // /review/reject）留到 TermsSubmitScreen 送出開戶設定前才向
+        // GET /verify-result 輪詢取得，見 client.ts waitForVerifyResult()。
+        await verifyFace(applicantId, sessionId, videoBlob, lightLog, {
           challenges: backendOrderRef.current,
           recording: {
             durationSec: totalMs / 1000,
@@ -578,35 +755,10 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         });
         if (cancelled) return;
 
-        setDecisionSummary({
-          verdict: record.decision.verdict,
-          verdictLabel: record.decision.verdictLabel,
-          riskScore: record.decision.riskScore,
-          reasons: record.decision.reasons,
-        });
-
-        // 2026-08-22：review（人工複核）不是拒絕，是「不確定、交給人工
-        // 看」——不該跟 reject 一樣擋在這裡逼使用者重錄。讓 review 也
-        // 繼續往下走，只是標記案件狀態，account_setup／完成畫面會顯示
-        // 「審核中」而不是「已通過」。真正的 reject 才留在下面 else
-        // 分支，顯示錯誤畫面。
-        if (record.decision.verdict === 'pass' || record.decision.verdict === 'review') {
-          setOverallStage('success');
-          setTotalSecondsRemaining(0);
-          speakPrompt(
-            record.decision.verdict === 'pass' ? '身分驗證完成。' : '身分驗證已送出，案件將由人工複核。',
-            'verification_success'
-          );
-          // riskScore 是 0-100、越低越可信；換算成既有 UI 欄位
-          // （faceConfidence）用的「信心分數」，方向跟原本假資料一致。
-          onVerificationComplete(
-            100 - record.decision.riskScore,
-            record.photometric.confidenceScore < 0.5,
-            record.decision.verdict
-          );
-        } else {
-          setOverallStage('error');
-        }
+        setOverallStage('success');
+        setTotalSecondsRemaining(0);
+        speakPrompt('身分驗證資料已送出。', 'verification_success');
+        onVerificationComplete();
       } catch (err) {
         if (cancelled) return;
         setVerifyError(
@@ -635,6 +787,13 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
     }
 
     // Prime and unlock audio context & speech synthesis on user gesture
+    // 2026-08-25：原本這裡建立一個用完就丟的暫時 AudioContext 來解鎖
+    // 權限，但 playAudioCue() 之後會另外建立、快取進 audioCtxRef 的是
+    // 完全不同的一個 AudioContext 實例——iOS Safari 的音效播放權限是
+    // 綁在「這一個 AudioContext 物件」上解鎖的，不同物件之間不會共用
+    // 解鎖狀態，導致後面 playAudioCue() 播放的提示音在手機上失敗（多半
+    // 是這個原因造成動作完成提示音聽不到）。改成直接建立、解鎖
+    // audioCtxRef.current 這個之後會真的拿來播放提示音的同一個物件。
     if (typeof window !== 'undefined') {
       if ('speechSynthesis' in window) {
         window.speechSynthesis.cancel();
@@ -643,9 +802,38 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioCtx) {
-          const testCtx = new AudioCtx();
-          testCtx.resume();
+          if (!audioCtxRef.current) {
+            audioCtxRef.current = new AudioCtx();
+          }
+          audioCtxRef.current.resume().catch(() => {});
+          // 2026-08-25：上面那個 AudioContext 統一的修法被真人測試證實
+          // 沒有解決問題（提示音還是聽不到）——代表光是 resume() 不夠。
+          // iOS Safari 有個更嚴格的已知需求：要在使用者手勢的呼叫堆疊
+          // 內，真的啟動並播放（哪怕是無聲的）一個音源節點，`resume()`
+          // 本身不算數。這裡額外播放一個極短、音量為 0 的 buffer
+          // source 來完成這個「真的播放過一次」的解鎖動作，不會有
+          // 使用者聽得到的聲音、純粹是解鎖用途。
+          const ctx = audioCtxRef.current;
+          const silentBuffer = ctx.createBuffer(1, 1, ctx.sampleRate || 22050);
+          const silentSource = ctx.createBufferSource();
+          silentSource.buffer = silentBuffer;
+          silentSource.connect(ctx.destination);
+          silentSource.start(0);
         }
+      } catch (_) {}
+    }
+
+    // 2026-08-25：手機版 <audio> 提示音也要在同一個使用者手勢的呼叫
+    // 堆疊內先播放解鎖過一次，之後 playMobileAudioCue() 用程式呼叫
+    // play() 才會成功——這段完全獨立於上面桌面版的 AudioContext 解鎖
+    // 邏輯，不影響桌面版任何行為。
+    if (!isDesktop) {
+      try {
+        mobileActionAudioRef.current?.play().catch(() => {});
+        mobileSuccessAudioRef.current?.play().then(() => {
+          mobileSuccessAudioRef.current?.pause();
+          if (mobileSuccessAudioRef.current) mobileSuccessAudioRef.current.currentTime = 0;
+        }).catch(() => {});
       } catch (_) {}
     }
 
@@ -684,11 +872,19 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
       if (e.data.size > 0) recordedChunksRef.current.push(e.data);
     };
     mediaRecorderRef.current = recorder;
-    recorder.start();
+    // 2026-08-25：原本 start() 沒帶參數，代表 ondataavailable 只會在
+    // stop() 那一刻觸發一次——這個寫法在部分手機瀏覽器（尤其 iOS
+    // Safari）上不可靠，實測發現整支影片最後組出來是 0 位元組（見
+    // PHASE1_NOTES.md）。改成帶 timeslice（每 1 秒觸發一次），資料
+    // 分段累積，也降低最後那一次沒觸發就整支報銷的風險。
+    recorder.start(1000);
+    // 見上面 timelineRef 的說明：這是「錄影真正開始」的時間基準點，
+    // track3_photometric 那個 useEffect 會拿它來量測照明階段實際延遲
+    // 了多久才開始播放，不是用事先算好的理論值。
+    recordingStartPerfMsRef.current = performance.now();
 
     lastSpokenKeyRef.current = '';
     setVerifyError('');
-    setDecisionSummary(null);
     setTotalSecondsRemaining(Math.ceil(totalMs / 1000));
     setCurrentChallengeIndex(0);
     setChallengeState('active');
@@ -711,7 +907,15 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
   return (
     <div className="w-full flex flex-col items-center">
-      {/* 
+      {/* 手機版動作提示音用的隱藏 <audio> 元素，見 playMobileAudioCue()
+          跟 ../../utils/mobileAudioCues.ts 的說明，桌面版不會用到這兩個。 */}
+      {!isDesktop && (
+        <>
+          <audio ref={mobileActionAudioRef} src={MOBILE_AUDIO_CUE_ACTION} preload="auto" className="hidden" />
+          <audio ref={mobileSuccessAudioRef} src={MOBILE_AUDIO_CUE_SUCCESS} preload="auto" className="hidden" />
+        </>
+      )}
+      {/*
         ========================================================================
         CAMERA VIEWPORT CONTAINER
         ========================================================================
@@ -799,7 +1003,7 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                   const nextState = !voiceEnabled;
                   setVoiceEnabled(nextState);
                   if (nextState) {
-                    playAudioCue('action');
+                    if (isDesktop) playAudioCue('action'); else playMobileAudioCue('action');
                   } else if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
                     window.speechSynthesis.cancel();
                   }
@@ -900,9 +1104,9 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                   }`}>
                     {currentType === 'wave' ? (
                       <span className="text-amber-300 font-bold">
-                        {isDesktop 
-                          ? `揮手進度: ${waveCount}/2 次 ${waveCount >= 2 ? '✓ (已完成)' : '(請在鏡頭前左右揮手)'}`
-                          : `揮手進度: ${waveCount}/2 次 ${waveCount >= 2 ? '✓ 已完成' : '(請揮手)'}`}
+                        {isDesktop
+                          ? `揮手進度: ${waveCount}/2 次 ${waveCount >= 2 ? '✓ (已完成)' : '(請將手抬至臉前揮手)'}`
+                          : `揮手進度: ${waveCount}/2 次 ${waveCount >= 2 ? '✓ 已完成' : '(請將手抬至臉前)'}`}
                       </span>
                     ) : (
                       <span className="text-sky-200">
@@ -1196,32 +1400,21 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                 <CheckCircle2 className="h-8 w-8" />
               </div>
 
-              {/* 2026-08-22：review（人工複核）跟 pass 都會走到這個
-                  success 畫面（見上面 processing effect 的說明），
-                  文案要分開，不能讓 review 的使用者誤以為已經核准。 */}
-              {decisionSummary?.verdict === 'review' ? (
-                <div>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-300 bg-amber-950/80 px-3.5 py-1 rounded-full border border-amber-400/30">
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                    <span>案件已受理，待人工複核</span>
-                  </span>
-                  <h4 className="text-lg font-black text-white mt-2.5">驗證資料已送出</h4>
-                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                    系統判定本次驗證需要人工複核，您可以繼續完成申請，審核結果將另行通知。
-                  </p>
-                </div>
-              ) : (
-                <div>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-300 bg-emerald-950/80 px-3.5 py-1 rounded-full border border-emerald-400/30">
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                    <span>身分核驗通過</span>
-                  </span>
-                  <h4 className="text-lg font-black text-white mt-2.5">身分驗證完成</h4>
-                  <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                    已確認為您本人辦理，動作核驗與照明響應已全數通過。
-                  </p>
-                </div>
-              )}
+              {/* 2026-08-25：/verify 改非同步後，這裡只代表「錄影跟資料
+                  已成功送出給後端」，不代表已經判定通過——真正的 verdict
+                  還在背景分析中，不能在這裡就講「已通過」。文案改成中性
+                  的「已送出、AI 正在複核」，使用者可以先繼續完成後面的
+                  開戶設定步驟，不用在這裡空等。 */}
+              <div>
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-sky-300 bg-sky-950/80 px-3.5 py-1 rounded-full border border-sky-400/30">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  <span>驗證資料已送出</span>
+                </span>
+                <h4 className="text-lg font-black text-white mt-2.5">系統正在進行最後複核</h4>
+                <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                  動作核驗與照明響應資料已上傳，系統正在背景比對分析，您可以先繼續完成後面的開戶設定，結果將依您選擇的通知方式另行通知。
+                </p>
+              </div>
 
               <button
                 id="face-verify-success-next-btn"
@@ -1235,11 +1428,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
             </motion.div>
           )}
 
-          {/* Error / Rejected State：涵蓋兩種情況——(1) 錄影/上傳/連線
-              本身出錯（verifyError 有值），(2) 真的呼叫完 /verify、
-              後端判定 review 或 reject（decisionSummary 有值但不是
-              verdict==='pass'，見上面 processing effect 的說明）。
-              兩種都不能讓使用者直接往下一步走，只能重新錄一次。 */}
+          {/* Error State：錄影/上傳/連線本身出錯（verifyError 有值）。
+              /verify 改非同步後，pass/review/reject 的判定已經不在這個
+              畫面裡揭曉了（見上面 processing effect 的說明），這裡只
+              處理送出過程本身失敗的情況，不能讓使用者直接往下一步走，
+              只能重新錄一次。 */}
           {overallStage === 'error' && (
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
@@ -1252,15 +1445,11 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
               <div>
                 <span className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-300 bg-rose-950/80 px-3.5 py-1 rounded-full border border-rose-400/30">
-                  {decisionSummary ? decisionSummary.verdictLabel : '驗證失敗'}
+                  驗證失敗
                 </span>
-                <h4 className="text-lg font-black text-white mt-2.5">
-                  {decisionSummary ? '這次驗證未通過' : '發生錯誤'}
-                </h4>
+                <h4 className="text-lg font-black text-white mt-2.5">發生錯誤</h4>
                 <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-                  {decisionSummary
-                    ? decisionSummary.reasons[0] || '請確認光線充足、正面注視鏡頭後重新錄製。'
-                    : verifyError}
+                  {verifyError}
                 </p>
               </div>
 
@@ -1268,7 +1457,6 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                 type="button"
                 onClick={() => {
                   setVerifyError('');
-                  setDecisionSummary(null);
                   setOverallStage('ready');
                   // 2026-08-21：原本只重置畫面狀態，沒有重新跟攝影機要一次
                   // 串流——同一個 MediaStream 會一路沿用到底，如果錄影

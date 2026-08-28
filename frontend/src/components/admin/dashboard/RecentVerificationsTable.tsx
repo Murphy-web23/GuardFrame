@@ -203,7 +203,17 @@ export const RecentVerificationsTable: React.FC<RecentVerificationsTableProps> =
                       <StatusBadge status={rec.verificationStatus} size="sm" />
                     </td>
                     <td className="py-3.5 px-4">
-                      <RiskBadge level={rec.riskLevel} />
+                      <div className="flex items-center gap-1.5">
+                        <RiskBadge level={rec.riskLevel} />
+                        {rec.riskScore !== undefined && (
+                          <span
+                            className="text-[11px] font-mono font-bold text-rose-600"
+                            title="分數越高風險越大"
+                          >
+                            {rec.riskScore}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="py-3.5 px-4 text-slate-600">
                       {rec.method}
@@ -258,7 +268,17 @@ export const RecentVerificationsTable: React.FC<RecentVerificationsTableProps> =
               </div>
 
               <div className="flex items-center justify-between pt-1 text-xs">
-                <RiskBadge level={rec.riskLevel} />
+                <div className="flex items-center gap-1.5">
+                  <RiskBadge level={rec.riskLevel} />
+                  {rec.riskScore !== undefined && (
+                    <span
+                      className="text-[11px] font-mono font-bold text-rose-600"
+                      title="分數越高風險越大"
+                    >
+                      {rec.riskScore}
+                    </span>
+                  )}
+                </div>
                 <HandlingStatusBadge status={rec.handlingStatus} />
               </div>
             </div>

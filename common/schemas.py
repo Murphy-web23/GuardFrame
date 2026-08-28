@@ -56,15 +56,24 @@ class TopSignal(CamelModel):
 
 
 class RecordingPhases(CamelModel):
-    """各階段的影格區間 [起, 訖]，全片索引。
+    """各階段的時間區間 [起, 訖)，相對錄影開始的毫秒數，訖不含在內。
 
     occlusion 是 action 內的子區間（= wave_hand 那一項的區間），
     不是獨立於動作挑戰之外的額外階段，見 §5.3 說明。
+
+    2026-08-27：原本這裡是「影格索引」（前端用假設的固定 30fps 換算
+    好才送過來）——真人測試（申請人 970）發現裝置實際錄影 fps 常常
+    達不到 30（該次只有 24.4fps），前端假設的 fps 跟影片實際 fps
+    對不上，換算出來的影格範圍會超出影片實際長度，Track 3/4 的分析
+    範圍因此系統性地算錯。改成前端只送「毫秒」，換算成影格索引這一步
+    挪到後端做（api/routes.py 的 `_ms_range_to_frame_range()`），用
+    `extract_frames()` 解碼影片後量到的真實 fps 換算，從根本上避免
+    這整類「假設 fps 跟真實 fps 對不上」的問題。
     """
 
-    action: tuple[int, int]
-    lighting: tuple[int, int]
-    occlusion: tuple[int, int]
+    action: tuple[float, float]
+    lighting: tuple[float, float]
+    occlusion: tuple[float, float]
 
 
 class RecordingInfo(CamelModel):

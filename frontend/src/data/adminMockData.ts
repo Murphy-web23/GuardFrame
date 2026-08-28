@@ -83,7 +83,7 @@ export const mockRecentVerifications: VerificationRecord[] = [
     method: '身分證 + 人臉活體',
     handlingStatus: 'completed',
     durationSec: 22,
-    notes: '核驗通過，OCR 辨識度高'
+    notes: '核驗通過，資料辨識度高'
   },
   {
     id: 'VF-20260818-005',
@@ -199,7 +199,7 @@ export const mockSystemServices: SystemService[] = [
   },
   {
     id: 'svc-3',
-    name: 'Document Verification (證件 OCR 辨識)',
+    name: 'Document Verification (證件資料辨識)',
     status: 'operational',
     statusLabel: 'Operational (運作正常)',
     latencyMs: 210,

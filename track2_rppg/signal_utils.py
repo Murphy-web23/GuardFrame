@@ -60,6 +60,74 @@ def extract_roi_signal(frames, landmarks_list, roi_indices):
     return signal
 
 
+def pos_algorithm(rgb_signal, fps, window_sec=1.6):
+    """POS（Plane-Orthogonal-to-Skin）演算法，Wang et al. 2017
+    "Algorithmic Principles of Remote-PPG"。
+
+    2026-08-26：原本只取綠色通道當作 rPPG 訊號（`_analyze_single_roi()`
+    的舊寫法），是最簡單的作法，但對動作/光線雜訊很敏感——真人測試
+    一路下來 SNR 持續是負值、roiConsistency 常常卡在 0，就算已經排除
+    了轉頭/揮手這些明顯的動作污染源，訊號品質還是不穩定。POS 是
+    rPPG 文獻裡專門處理這個問題的標準方法：不是只看單一通道，而是把
+    R、G、B 三個通道依「同一時間窗內的平均值」做正規化（消除整體亮度
+    變化，例如動作造成的反光強弱起伏），再投影到一個跟膚色方向正交的
+    平面上——這個平面的方向是理論推導出來的皮膚反射光學模型固定值，
+    不是憑經驗湊的參數，對動作與光線變化的穩健性比單一通道方法好
+    很多，是目前非深度學習方法裡的標準做法之一。
+
+    演算法步驟（逐一滑動時間窗，重疊相加）：
+        1. 每個時間窗內，各通道除以窗內時間平均值做正規化
+        2. 投影到兩個固定方向：S1 = Gn - Bn，S2 = Gn + Rn - 2Bn
+        3. 用兩者的標準差比例加權合併：h = S1 + (std(S1)/std(S2)) * S2
+        4. 把每個窗算出的 h 疊加回原始時間軸（重疊部分直接相加，
+           標準 POS 論文的 overlap-add 做法）
+
+    參數:
+        rgb_signal: np.ndarray，shape (T, 3)，R、G、B 三通道，
+            不可以有 NaN（呼叫前要先用 interpolate_missing() 補好）
+        fps: float
+        window_sec: float，滑動窗長度（秒），論文建議約 1.6 秒
+            （心跳週期的量級），這裡沿用原論文的預設值
+
+    回傳:
+        np.ndarray，shape (T,)，合成後的脈搏訊號，還沒經過
+        detrend/bandpass，維持原始時間軸長度不變
+    """
+    rgb = np.asarray(rgb_signal, dtype=np.float64)
+    if rgb.ndim != 2 or rgb.shape[1] != 3:
+        raise ValueError(f"pos_algorithm 需要 shape (T, 3) 的訊號，收到 {rgb.shape}")
+
+    n = len(rgb)
+    win_len = max(int(round(window_sec * fps)), 2)
+    if n < win_len:
+        # 訊號太短做不了完整的滑動窗，退化成整段當一個窗處理，
+        # 這種情況下面的 bandpass_filter 多半也會因為長度不足而失敗，
+        # 這裡先合理處理，不特別報錯。
+        win_len = n
+
+    h_sum = np.zeros(n, dtype=np.float64)
+
+    for start in range(0, n - win_len + 1):
+        end = start + win_len
+        window = rgb[start:end]
+        mean_c = window.mean(axis=0)
+        if np.any(mean_c <= 1e-9):
+            continue
+        cn = window / mean_c
+
+        s1 = cn[:, 1] - cn[:, 2]  # G - B
+        s2 = cn[:, 1] + cn[:, 0] - 2.0 * cn[:, 2]  # G + R - 2B
+
+        std1 = s1.std()
+        std2 = s2.std()
+        alpha = std1 / std2 if std2 > 1e-9 else 0.0
+
+        h = s1 + alpha * s2
+        h_sum[start:end] += h - h.mean()
+
+    return h_sum
+
+
 def interpolate_missing(signal):
     """把 extract_roi_signal 留下的 np.nan 用線性內插補起來。
 

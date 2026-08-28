@@ -232,6 +232,9 @@ def test_verification_record_full_assembly():
     # model_dump() 保留 Python 原生型別（tuple 維持 tuple）；
     # 真的送出去的 JSON（model_dump_json()／FastAPI response）會是陣列。
     assert dumped["recording"]["phases"]["occlusion"] == (420, 599)
-    assert record.model_dump_json(by_alias=True).find('"occlusion":[420,599]') != -1
+    # phases 現在是 float（毫秒），不是 int（影格索引），見
+    # common/schemas.py RecordingPhases 的說明——JSON 序列化因此是
+    # [420.0,599.0]，不是 [420,599]。
+    assert record.model_dump_json(by_alias=True).find('"occlusion":[420.0,599.0]') != -1
     assert dumped["vlmSummary"] is None
     assert dumped["accountResult"] == "rejected"

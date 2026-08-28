@@ -315,7 +315,14 @@ export default function App() {
   );
 
   return (
-    <div className="w-full min-h-screen bg-slate-900 flex flex-col font-sans">
+    // 2026-08-27：原本用 min-h-screen（CSS 100vh）——Android Chrome 網址列
+    // 會動態展開/收合，100vh 是用網址列還沒收起來的高度算的，跟實際可視
+    // 區域對不上，導致下面 MobileLayout.tsx 巢狀的 overflow-y-auto 滾動
+    // 容器算出錯誤的可滾動高度，要等瀏覽器 resize 重新計算佈局才會修正
+    // ——真人測試回報「Step 5 畫面卡了一下子才能滑動」正是這個症狀。
+    // 換成 min-h-dvh（CSS 100dvh，動態視窗高度）直接反映實際可視區域，
+    // 不受網址列收合影響。
+    <div className="w-full min-h-dvh bg-slate-900 flex flex-col font-sans">
       {/* Primary Simulator & Layout Switcher */}
       {appMode === 'user_onboarding' ? (
         <DeviceSimulator>

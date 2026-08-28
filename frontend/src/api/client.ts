@@ -175,6 +175,9 @@ export interface LightLog {
   segments: LightLogSegment[];
 }
 
+// 2026-08-27：這三個是 [起, 訖) 毫秒區間（相對錄影開始），不是影格
+// 索引——換算成影格索引這一步交給後端用真實 fps 做，見
+// common/schemas.py RecordingPhases 的說明。
 export interface RecordingPhases {
   action: [number, number];
   lighting: [number, number];
@@ -191,6 +194,17 @@ export interface ChallengesPayload {
   };
 }
 
+// 2026-08-25：/verify 後端改成非同步（先回應 202「處理中」，五層分析在
+// 背景跑），不再是「等到分析全部跑完才回應」——MediaPipe/InsightFace
+// 在 CPU 上實測數十秒到數分鐘，同步等待會被 Cloudflare Tunnel 這類
+// proxy 中途判定逾時掐斷連線（見 PHASE1_NOTES.md）。呼叫端不會再拿到
+// 完整的 BackendVerificationRecord，只拿到這個送出確認；真正的結果要
+// 另外呼叫 getVerifyResult() 輪詢。
+export interface VerifySubmitAck {
+  status: 'processing';
+  applicantId: number;
+}
+
 export async function verifyFace(
   applicantId: number,
   sessionId: string,
@@ -198,7 +212,7 @@ export async function verifyFace(
   lightLog: LightLog,
   challenges: ChallengesPayload,
   sourceType: string = '虛擬攝影機'
-): Promise<BackendVerificationRecord> {
+): Promise<VerifySubmitAck> {
   const form = new FormData();
   const ext = video.type.includes('mp4') ? 'mp4' : 'webm';
   form.append('video', video, `verify.${ext}`);
@@ -210,6 +224,51 @@ export async function verifyFace(
     headers: { 'X-Session-Id': sessionId },
     body: form,
   });
+}
+
+export type VerifyResultPoll =
+  | { status: 'processing' }
+  | { status: 'done'; record: BackendVerificationRecord };
+
+export async function getVerifyResult(
+  applicantId: number,
+  sessionId: string
+): Promise<VerifyResultPoll> {
+  return request(`/api/applicants/${applicantId}/verify-result`, {
+    method: 'GET',
+    headers: { 'X-Session-Id': sessionId },
+  });
+}
+
+// 開戶設定（account-setup）跟開戶完成畫面都需要「確定背景分析真的跑完
+// 了」才能往下走，這裡提供共用的輪詢工具，不要各自重寫一份。預設每
+// 3 秒問一次，最多等 5 分鐘（實測數十秒到數分鐘內都會跑完，5 分鐘已經
+// 是很寬裕的上限）。
+export async function waitForVerifyResult(
+  applicantId: number,
+  sessionId: string,
+  options: { intervalMs?: number; timeoutMs?: number; onTick?: (elapsedMs: number) => void } = {}
+): Promise<BackendVerificationRecord> {
+  const intervalMs = options.intervalMs ?? 3000;
+  const timeoutMs = options.timeoutMs ?? 5 * 60 * 1000;
+  const startedAt = Date.now();
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const result = await getVerifyResult(applicantId, sessionId);
+    if (result.status === 'done') return result.record;
+
+    const elapsed = Date.now() - startedAt;
+    options.onTick?.(elapsed);
+    if (elapsed >= timeoutMs) {
+      throw new ApiError(
+        408,
+        'AI 複核處理時間較長，請稍候再試一次送出，或聯繫客服協助確認案件狀態',
+        null
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 }
 
 // --------------------------------------------------------------------------

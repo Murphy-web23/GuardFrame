@@ -188,8 +188,13 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
           {errors.idNumber && <p className="text-[11px] text-rose-500 pl-1">{errors.idNumber}</p>}
         </div>
 
-        {/* Birthday & Phone (2 cols) */}
-        <div className="grid grid-cols-2 gap-3">
+        {/* Birthday & Phone
+            2026-08-28：原本是 grid-cols-2 並排，真人手機測試回報兩欄
+            重疊——原生 type="date" 輸入框在窄螢幕上的瀏覽器內建日期
+            選擇器最小寬度常常比欄位本身寬，會溢出蓋到右邊的手機號碼
+            欄位。手機版螢幕本來就窄，改成單欄堆疊比較穩，不再靠 CSS
+            硬擠兩欄。 */}
+        <div className="grid grid-cols-1 gap-3">
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-700">出生年月日</label>
             <div className="relative">
