@@ -34,6 +34,9 @@ track1_synthetic/weights/
 .pytest_cache/
 .ipynb_checkpoints/
 frontend/.vite/
+
+# 簡報素材，本機用，不進 git
+/mascot_assets/
 .vscode/
 .idea/
 
