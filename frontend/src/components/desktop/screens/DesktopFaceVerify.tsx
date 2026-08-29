@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FormData } from '../../../types';
 import { FaceVerificationEngine } from '../../face/FaceVerificationEngine';
 import { PhotometricConsentNotice } from '../../face/PhotometricConsentNotice';
+import { ActionsDemoPreview } from '../../face/ActionsDemoPreview';
 import { AIGuardian } from '../../AIGuardian';
 import { 
   ShieldCheck, 
@@ -31,6 +32,10 @@ export const DesktopFaceVerify: React.FC<DesktopFaceVerifyProps> = ({
   onNext,
 }) => {
   const [hasAcknowledged, setHasAcknowledged] = useState(false);
+  // 2026-08-29：正式開始錄影前，先給使用者看一次四個動作的動畫示範
+  // （見 ActionsDemoPreview.tsx），排在 PhotometricConsentNotice 之後，
+  // 桌面版跟手機版共用同一份元件。
+  const [hasSeenDemo, setHasSeenDemo] = useState(false);
 
   // 2026-08-25：/verify 改非同步後，這裡只代表「錄影已成功送出」，
   // 真正的 verdict 還沒出來（見 FaceVerificationEngine.tsx 的說明），
@@ -90,6 +95,8 @@ export const DesktopFaceVerify: React.FC<DesktopFaceVerifyProps> = ({
         <div className="lg:col-span-7 flex flex-col items-center">
           {!hasAcknowledged ? (
             <PhotometricConsentNotice onAcknowledge={() => setHasAcknowledged(true)} />
+          ) : !hasSeenDemo ? (
+            <ActionsDemoPreview onStart={() => setHasSeenDemo(true)} />
           ) : (
             <FaceVerificationEngine
               applicantId={formData.applicantId}

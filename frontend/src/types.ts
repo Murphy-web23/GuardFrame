@@ -139,6 +139,16 @@ export interface VerificationRecord {
   handlingStatus: HandlingStatus;
   durationSec: number;
   notes?: string;
+  // 2026-08-29：VLM 視覺複核摘要（FR-37），只有人工複核案件才會有值，
+  // 見 VerificationDetailModal.tsx「AI 視覺複核摘要」區塊。跟上面
+  // notes（系統判定理由，來自 decision.reasons）是不同來源，不要混用。
+  vlmSummary?: {
+    available: boolean;
+    frameObservations: { timestampSec: number; observation: string }[];
+    summary: string;
+    model: string;
+    latencyMs: number;
+  } | null;
 }
 
 export interface DashboardStats {

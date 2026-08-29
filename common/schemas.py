@@ -206,7 +206,10 @@ class DecisionResult(CamelModel):
 
 
 class VlmFrameObservation(CamelModel):
-    frame_index: int
+    # 2026-08-29：原本是 frame_index，但複核人員要的是「該去影片哪個
+    # 時間點看」，不是內部的影格編號——換算成秒數在這裡做一次，
+    # 前端跟複核人員都不用自己拿 frame_index 除以 fps。
+    timestamp_sec: float
     observation: str
 
 
@@ -413,3 +416,20 @@ class AdminLoginResponse(CamelModel):
 
 class AdminRecordsResponse(CamelModel):
     records: list[VerificationRecord]
+
+
+class AdminRecordActionRequest(CamelModel):
+    """人工複核案件的行員動作。只有 verdict == "review" 的案件能執行。
+
+    approve：行員確認核准通過，改寫 verdict/verdictLabel 為最終結果，
+        寄送核准通知信。
+    request_docs／branch_visit：不改動判定結果（案件仍是 review，
+        還在等後續動作），只寄出對應內容的通知信。
+    """
+
+    action: Literal["approve", "request_docs", "branch_visit"]
+
+
+class AdminRecordActionResponse(CamelModel):
+    success: bool
+    email_sent: bool

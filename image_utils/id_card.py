@@ -464,6 +464,25 @@ def rectify_id_card(image: np.ndarray) -> dict:
         skin = _skin_mask(small)
         edges[skin > 0] = 0
 
+    # 2026-08-29：「找不到邊界」「長寬比不對」這類訊息太籠統，涵蓋了好
+    # 幾種完全不同的失敗原因（構圖不好、背景太雜、手指蓋角……），使用者
+    # 不知道該怎麼改善。這裡準備一份「沒有膚色遮罩」的邊緣圖，之後不管
+    # 是完全找不到四邊形、還是找到但信心不足，都可以拿這份沒遮罩的版本
+    # 重跑一次比對——如果沒有膚色遮罩反而找得到、或信心分數明顯更高，
+    # 代表原本的失敗很可能就是膚色遮罩造成的缺口，換句話說「手指蓋住
+    # 卡片角落」是合理的推測，可以給更精確的訊息。這裡只是拿來判斷
+    # 失敗原因、生成訊息，不會採用這個沒過膚色遮罩檢查的候選結果，
+    # 矯正還是必須真的通過完整流程。
+    def _suspect_finger_occlusion():
+        if small.ndim != 3:
+            return False
+        edges_no_mask = cv2.Canny(blurred, config.ID_CARD_CANNY_LOW, config.ID_CARD_CANNY_HIGH)
+        quad_no_mask = _find_quad_contour(edges_no_mask)
+        if quad_no_mask is None:
+            return False
+        confidence_no_mask = _compute_confidence(_order_corners(quad_no_mask))
+        return confidence_no_mask >= config.ID_CARD_MIN_CONFIDENCE
+
     quad = _find_quad_contour(edges)
     if quad is None:
         # 2026-08-24：暫時的診斷 log，門檻（面積比例、信心分數）都還沒有
@@ -474,12 +493,17 @@ def rectify_id_card(image: np.ndarray) -> dict:
             f"完全沒找到四邊形輪廓",
             flush=True,
         )
+        message = (
+            "手指好像擋住證件的角了，麻煩改拿卡片邊緣（不要蓋住角落），再拍一次"
+            if _suspect_finger_occlusion()
+            else "沒有看到完整的證件外框，請把整張證件放進畫面裡、背景保持簡單，再拍一次"
+        )
         return {
             "success": False,
             "rectified": None,
             "corners": None,
             "confidence": 0.0,
-            "message": "未偵測到證件邊界，請確認證件完整入鏡、背景單純後重新拍攝",
+            "message": message,
         }
 
     ordered_small = _order_corners(quad)
@@ -499,12 +523,17 @@ def rectify_id_card(image: np.ndarray) -> dict:
     # 標準規格太多（例如背景裡的方形紋理，長寬比接近 1:1 而不是 1.585）
     # 就當作失敗，不要硬做透視變換。
     if confidence < config.ID_CARD_MIN_CONFIDENCE:
+        message = (
+            "手指好像擋住證件的角了，麻煩改拿卡片邊緣（不要蓋住角落），再拍一次"
+            if _suspect_finger_occlusion()
+            else "拍到的形狀不太像證件，請確認整張證件都有拍進去、背景保持簡單，再拍一次"
+        )
         return {
             "success": False,
             "rectified": None,
             "corners": None,
             "confidence": confidence,
-            "message": "偵測到的邊界形狀與證件規格差異過大，請確認證件完整入鏡、背景單純後重新拍攝",
+            "message": message,
         }
 
     # 2026-08-27：長寬比合格不代表裡面真的是證件——桌面、書本封面、
@@ -522,7 +551,7 @@ def rectify_id_card(image: np.ndarray) -> dict:
             "rectified": None,
             "corners": None,
             "confidence": confidence,
-            "message": "偵測到的區域內文字內容過少，請確認拍攝的是證件本身、背景單純後重新拍攝",
+            "message": "畫面裡看起來沒有足夠的文字，請確認拍的是證件本身、背景保持簡單，再拍一次",
         }
 
     return _warp_to_output(orig, ordered_orig, confidence)

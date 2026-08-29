@@ -83,6 +83,28 @@ export default function App() {
     return () => window.removeEventListener('hashchange', handleUrlRoute);
   }, []);
 
+  // 2026-08-29：真人測試發現改用 h-dvh（CSS 100dvh 單位）後，Android
+  // Chrome 上還是會出現「所有畫面都滑不動」的狀況（iOS Safari 完全
+  // 沒這個問題）——dvh 這個單位在 Android Chrome 上的實作歷史上一直
+  // 不太穩定，尤其跟這裡巢狀的 flex + overflow-y-auto 捲動容器組合
+  // 在一起時。改成不依賴任何 vh/dvh CSS 單位，直接用 JS 量測
+  // `window.innerHeight`（瀏覽器網址列收合、鍵盤彈出都會觸發
+  // resize，這是所有行動瀏覽器都可靠支援、且行之有年的作法，dvh
+  // 單位其實就是想取代這個 workaround，但取代得不夠穩），寫進一個
+  // CSS 變數讓最外層容器使用。
+  useEffect(() => {
+    const setAppHeight = () => {
+      document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`);
+    };
+    setAppHeight();
+    window.addEventListener('resize', setAppHeight);
+    window.addEventListener('orientationchange', setAppHeight);
+    return () => {
+      window.removeEventListener('resize', setAppHeight);
+      window.removeEventListener('orientationchange', setAppHeight);
+    };
+  }, []);
+
   const updateFormData = (data: Partial<FormData>) => {
     setFormData((prev) => ({ ...prev, ...data }));
   };
@@ -322,7 +344,19 @@ export default function App() {
     // ——真人測試回報「Step 5 畫面卡了一下子才能滑動」正是這個症狀。
     // 換成 min-h-dvh（CSS 100dvh，動態視窗高度）直接反映實際可視區域，
     // 不受網址列收合影響。
-    <div className="w-full min-h-dvh bg-slate-900 flex flex-col font-sans">
+    //
+    // 2026-08-29：真人 Android 測試回報 Step5（設定開戶服務功能）畫面
+    // 卡住完全滑不動——先改成固定 h-dvh（不是 min-h-dvh）解決「最外層
+    // 自己也變成可捲動、跟裡面 MobileLayout.tsx 的捲動容器互搶觸控
+    // 手勢」這個問題，但真人測試發現 Android Chrome 上**所有**畫面
+    // 都滑不動（iOS Safari 完全沒事），範圍比單一畫面大，懷疑 dvh
+    // 這個 CSS 單位本身在這台裝置的 Chrome 上就不穩。改成上面
+    // useEffect 量出來的 --app-height（JS 讀 window.innerHeight 寫入
+    // CSS 變數），不依賴瀏覽器對 dvh 單位的實作，見該處說明。
+    <div
+      className="w-full bg-slate-900 flex flex-col font-sans"
+      style={{ height: 'var(--app-height, 100vh)' }}
+    >
       {/* Primary Simulator & Layout Switcher */}
       {appMode === 'user_onboarding' ? (
         <DeviceSimulator>

@@ -92,7 +92,15 @@ PHOTO_LATENCY_MAX_MS = 500
 # 這麼多毫秒的緩衝影格，後端這裡用同一個值把 t=0 的偏移量扣回來，見
 # track3_photometric/analyzer.py analyze_photometric() 的說明。
 PHOTO_LIGHTING_BUFFER_MS = 400.0
-PHOTO_GEOMETRY_MIN = 0.50
+# 2026-08-29：原本 0.50，用真人測試累積到的 30 筆有效樣本（含
+# correlation>0.1 的所有紀錄）實測分佈：27/30 直接頂到滿分 1.000
+# （PHOTO_GEOMETRY_CV_REFERENCE=0.3 這個參考值本身偏低，見那個常數
+# 的說明），剩下 3 筆裡有 2 筆（申請人1038 correlation=0.708、966
+# correlation=0.629，訊號品質都不差）卡在 0.50 門檻之下，跟最低分那
+# 筆（1035=0.107，唯一數值異常低的樣本）之間有個乾淨的空隙（0.107~
+# 0.321 之間完全沒有樣本）。改到 0.20，卡在這個空隙裡：讓 1038、966
+# 通過，同時 1035 還是會被擋下。
+PHOTO_GEOMETRY_MIN = 0.20
 PHOTO_SEGMENT_COUNT = 5
 PHOTO_SEGMENT_MIN_MS = 400
 PHOTO_SEGMENT_MAX_MS = 600
@@ -108,12 +116,18 @@ OCC_IDENTITY_STABILITY_MIN = 0.90
 OCC_MAX_DROP_THRESHOLD = 0.95
 OCC_LAYER_SCORE_MIN = 0.50
 
-# 五層權重（Track 4 為核心防禦層，權重最高；實測後於階段4依 ROC 校準微調）
+# 四層權重（原五層，2026-08-29 起 Track2 rPPG 停用，見
+# track2_rppg/analyzer.py::disabled_result() 的說明）。
+# 釋出的 0.15 全部給 Track4——它本來就是設計上的核心防禦層，且是四層
+# 裡唯一在真人測試中有清楚分離度的（真人身分穩定度 vs 攻擊樣本落差
+# 明顯，見 OCC_IDENTITY_STABILITY_MIN 的說明）；沒有平均分給其餘三層，
+# 是因為 Track1 模型還沒訓練完成、Track3 穩定度也還在處理中，兩者都
+# 還沒有足夠證據支持該拿更高權重。
+# Track 4 為核心防禦層，權重最高；實測後於階段4依 ROC 校準微調
 WEIGHT_BASELINE = 0.10
 WEIGHT_SYNTHETIC = 0.20
-WEIGHT_RPPG = 0.15
 WEIGHT_PHOTOMETRIC = 0.20
-WEIGHT_OCCLUSION = 0.35
+WEIGHT_OCCLUSION = 0.50
 
 # 決策區間
 # 2026-08-21：原本 PASS_MAX=30、REVIEW_MAX=60，是 CONVENTIONS.md §8
@@ -404,3 +418,36 @@ BASELINE_ACTION_DURATIONS = {
     "turn_right": 5,
     "wave_hand": 7,
 }
+
+# --------------------------------------------------------------------------
+# 結果通知信（自動判定案件用，見 notifications.py）
+# 改用 Resend 的 API 寄信，不用 SMTP——Gmail 應用程式密碼這條路在
+# 2026-08-29 demo 前測試時發現該帳戶已被 Google 直接關閉這項設定
+# （帳戶層級限制，不是操作問題），改走 API Key 的方式更穩定、不依賴
+# Google 帳戶安全設定的變動。RESEND_API_KEY 吃環境變數，不寫死在
+# 程式碼裡；沒設定時 notifications.py 會直接跳過寄信，不拋例外。
+# --------------------------------------------------------------------------
+import os
+
+from dotenv import load_dotenv
+
+# 讀 .env（已在 .gitignore 排除，金鑰不會進 git）。放在這裡而不是只靠
+# api/database.py 的 load_dotenv() 呼叫，是因為不能保證 config.py 一定
+# 在 database.py 之後被匯入——直接在這裡也呼叫一次，不管匯入順序為何，
+# 這幾個環境變數都保證讀得到。load_dotenv() 預設不會覆蓋已存在的環境
+# 變數，重複呼叫多次是安全的。
+load_dotenv()
+
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+# 沒有驗證過自己網域時，Resend 只允許用這個測試寄件人，收件人也只能是
+# 你自己註冊帳號的信箱——demo 用途足夠，之後若要寄給任意信箱需要驗證
+# 網域（見 https://resend.com/domains）。
+RESEND_FROM_ADDRESS = os.getenv("RESEND_FROM_ADDRESS", "onboarding@resend.dev")
+RESEND_FROM_NAME = "GuardFrame 開戶驗證"
+
+# 通知信裡「回開戶頁面」連結用的網址。前端是純前端狀態機（沒有路由，
+# 見 frontend/src/App.tsx），沒辦法產生指回使用者當下那一步的深連結，
+# 這裡只能給網站首頁，信件文字也照實寫「請重新登入」而不是「點此繼續」。
+# demo 用手機掃 QR code 連線時（見開發伺服器改監聽區網那次修改），
+# 記得把這個改成當下那台電腦的區網 IP，不要用 localhost。
+FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")

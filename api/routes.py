@@ -31,12 +31,15 @@ from api.database import SessionLocal, get_db
 from api.models import AdminCredential, Applicant, VerificationRecordRow
 from baseline_challenge.analyzer import analyze_baseline
 from common.face_utils import extract_frames
-from common.fusion import fuse_decision
+from common.fusion import failed_layers, fuse_decision
+from notifications import send_review_action_email, send_verdict_email
 from common.schemas import (
     AccountSetupRequest,
     AccountSetupResponse,
     AdminLoginRequest,
     AdminLoginResponse,
+    AdminRecordActionRequest,
+    AdminRecordActionResponse,
     AdminRecordsResponse,
     ApplicantCreateRequest,
     ApplicantCreateResponse,
@@ -54,7 +57,7 @@ from common.schemas import (
 from image_utils.id_card import rectify_id_card
 from image_utils.quality import check_image_quality
 from track1_synthetic.detector import detect_synthetic
-from track2_rppg.analyzer import analyze_rppg
+from track2_rppg.analyzer import disabled_result as rppg_disabled_result
 from track3_photometric.analyzer import analyze_photometric
 from track4_occlusion.analyzer import analyze_occlusion
 from vlm_summary.summarizer import summarize_verification
@@ -227,17 +230,14 @@ def get_challenge_order(
         # 影響 §5.3 隨機順序防重放的安全設計，只是限制了「最後一個動作」
         # 這一個位置的候選集合，其他位置跟出現機率都還是隨機的。
         #
-        # 原本的隨機邏輯（暫時停用，備份供之後改回來）：
-        #     safe_last_actions = ["blink", "wave_hand"]
-        #     last_action = random.choice(safe_last_actions)
-        #     remaining = [a for a in config.BASELINE_ACTION_DURATIONS if a != last_action]
-        #     random.shuffle(remaining)
-        #     order = remaining + [last_action]
-        #
-        # 2026-08-27：!!! 暫時性 !!! 固定成「眨眼、左轉頭、右轉頭、揮手」
-        # 這個順序方便測試比對，之後要記得改回上面那段隨機邏輯，
+        # 2026-08-27 到 2026-08-29：曾暫時固定成「眨眼、左轉頭、右轉頭、
+        # 揮手」方便測試比對，測試告一段落，改回原本的隨機邏輯，
         # 恢復 §5.3 的隨機順序防重放設計。
-        order = ["blink", "turn_left", "turn_right", "wave_hand"]
+        safe_last_actions = ["blink", "wave_hand"]
+        last_action = random.choice(safe_last_actions)
+        remaining = [a for a in config.BASELINE_ACTION_DURATIONS if a != last_action]
+        random.shuffle(remaining)
+        order = remaining + [last_action]
         applicant.challenge_order = order
         db.commit()
 
@@ -358,6 +358,59 @@ def _sample_for_synthetic(frames, count):
         return []
     indices = np.linspace(0, len(frames) - 1, count).astype(int).tolist()
     return [cv2.resize(frames[i], (config.FACE_SIZE, config.FACE_SIZE)) for i in indices]
+
+
+def _collect_review_frames(failed, *, frames, fps, phases, occlusion_result):
+    """依實際沒通過的層，各自挑代表性影格給 VLM 看（FR-37 人工複核摘要）。
+
+    只有 Track4（occlusion）的 analyzer 有逐格定位的異常索引；Track1
+    （synthetic）跟 Track3（photometric）沒有這種細粒度輸出，各自的
+    代表畫面改用「這層實際分析過的範圍」抓一兩張：
+        - synthetic：跟 detect_synthetic() 收到的同一組抽樣索引
+          （見上面 _sample_for_synthetic()），取頭尾兩張，不用整組 10 張
+          （VLM 只需要看出「有沒有明顯合成痕跡」，不必逐張看）
+        - photometric：照明測試階段（phases.lighting）取中間那格
+
+    baseline（對照組動作挑戰）沒有對應影格——它判定的是「有沒有在時限內
+    完成指定動作」，不是某一格畫面看起來有沒有異常，沒有值得指給複核
+    人員看的單一畫面，故意不產生任何影格。
+
+    2026-08-29 新增：原本這裡只處理 occlusion，等於「造成 review 的
+    如果是 Track1/3，VLM 完全看不到任何畫面、摘要永遠是空的」，跟
+    review 案件的實際原因對不上。
+
+    每張影格都標 "source"（見 vlm_summary.summarizer.PROMPTS）——不然
+    VLM 只拿到一張圖跟一句通用提示詞「找找看哪裡奇怪」，不知道系統
+    原本在懷疑什麼，寫出來的描述會跟這格被標記的實際理由脫鉤（例如
+    Track4 懷疑的是「身分特徵不連續」，通用提示詞卻只會泛泛地找「畫面
+    奇不奇怪」，兩者常常對不上）。
+    """
+    collected = []
+
+    if "occlusion" in failed:
+        collected += [
+            {
+                "image": frames[phases.occlusion[0] + i],
+                "timestampSec": (phases.occlusion[0] + i) / fps,
+                "source": "occlusion",
+            }
+            for i in occlusion_result["anomalyFrames"]
+            if 0 <= phases.occlusion[0] + i < len(frames)
+        ]
+
+    if "synthetic" in failed and frames:
+        sampled_indices = np.linspace(0, len(frames) - 1, config.FRAME_COUNT).astype(int).tolist()
+        for idx in sorted({sampled_indices[0], sampled_indices[-1]}):
+            collected.append({"image": frames[idx], "timestampSec": idx / fps, "source": "synthetic"})
+
+    if "photometric" in failed:
+        mid = (phases.lighting[0] + phases.lighting[1]) // 2
+        if 0 <= mid < len(frames):
+            collected.append(
+                {"image": frames[mid], "timestampSec": mid / fps, "source": "photometric"}
+            )
+
+    return collected
 
 
 @router.post("/id-card/rectify", response_model=IdCardRectifyResponse)
@@ -614,35 +667,37 @@ def _run_verify_analysis(
         "topSignals": synthetic_raw["topSignals"],
     }
 
-    action_boundaries = _action_time_boundaries(challenge_dicts, fps)
-    motion_spans = [
-        action_boundaries[action]
-        for action in ("wave_hand", "turn_left", "turn_right")
-        if action in action_boundaries
-    ]
-    rppg_frames = _frames_excluding_many(frames, motion_spans)
-    rppg_result = analyze_rppg(rppg_frames, fps)
+    # 2026-08-29：Track2 rPPG 已停用，不再實際分析、不參與風險融合，
+    # 見 track2_rppg/analyzer.py::disabled_result() 的說明。原本這裡
+    # 用 _action_time_boundaries()／_frames_excluding_many() 算出排除
+    # 動作區間的 rppg_frames 只給 rPPG 用，現在沒有呼叫對象了，故不再
+    # 計算；這兩個 helper 函式本身保留在下方，未來若重新啟用可以直接
+    # 復用。
+    rppg_result = rppg_disabled_result()
     photometric_result = analyze_photometric(
         lighting_frames, fps, light_log_dict, buffer_ms=config.PHOTO_LIGHTING_BUFFER_MS
     )
     occlusion_result = analyze_occlusion(occlusion_frames, fps)
 
     decision = fuse_decision(
-        baseline_result, synthetic_result, rppg_result, photometric_result, occlusion_result
+        baseline_result, synthetic_result, photometric_result, occlusion_result
     )
 
-    # VLM 摘要僅於人工複核案件觸發（FR-37）。anomalyFrames 是相對
-    # occlusion 區間的索引，換算回全片索引才能從 frames 取出對應影格
-    # （CONVENTIONS §4.6 明確提醒的容易出錯之處）。
+    # VLM 摘要僅於人工複核案件觸發（FR-37）。造成 review 的不一定是
+    # Track4——2026-08-29 以前這裡寫死只送 occlusion 的異常影格，但
+    # Track1（合成偵測）、Track3（照明響應）沒過一樣會把案件推進
+    # review，那種情況下只給 VLM 看 occlusion 的畫面是文不對題。改成
+    # 依 fuse_decision 實際判定沒過的層，各自挑代表性畫面。
     vlm = None
     if decision["verdict"] == "review":
-        anomaly_indices = [
-            phases.occlusion[0] + i
-            for i in occlusion_result["anomalyFrames"]
-            if 0 <= phases.occlusion[0] + i < len(frames)
-        ]
-        anomaly_images = [frames[i] for i in anomaly_indices]
-        vlm = summarize_verification({"decision": decision}, anomaly_images)
+        anomaly_frames = _collect_review_frames(
+            failed_layers(baseline_result, synthetic_result, photometric_result, occlusion_result),
+            frames=frames,
+            fps=fps,
+            phases=phases,
+            occlusion_result=occlusion_result,
+        )
+        vlm = summarize_verification({"decision": decision}, anomaly_frames)
 
     account_result = _ACCOUNT_RESULT_BY_VERDICT[decision["verdict"]]
     now = datetime.now()
@@ -732,6 +787,12 @@ def _run_verify_analysis(
         shutil.move(tmp_path, stored_video_path)
         row.video_path = str(stored_video_path.relative_to(config.BASE_DIR))
         db.commit()
+
+        # 通過／拒絕是當下就確定的自動判定，立刻寄信通知。人工複核的
+        # 通知要等審核人員在後台看完才觸發，屬於後台審核流程，不在這裡
+        # 處理（見 notifications.py 開頭說明）。寄信失敗不影響驗證結果
+        # 已經寫入資料庫這件事，send_verdict_email() 內部已經吞掉例外。
+        send_verdict_email(applicant.email, applicant.name, decision["verdict"], record_id=row.id)
     finally:
         db.close()
 
@@ -972,3 +1033,41 @@ def get_admin_record(
     if row is None:
         raise HTTPException(status_code=404, detail="record not found")
     return VerificationRecord.model_validate(_row_to_record_dict(row))
+
+
+@router.post("/admin/records/{record_id}/action", response_model=AdminRecordActionResponse)
+def resolve_admin_record(
+    record_id: int,
+    payload: AdminRecordActionRequest,
+    admin: AdminCredential = Depends(_require_admin),
+    db: Session = Depends(get_db),
+) -> AdminRecordActionResponse:
+    """後台「發送補件通知／通知前往實體分行／確認核准通過」三顆按鈕的
+    真正實作。之前這三顆按鈕只改前端本地畫面狀態，沒有任何後端端點
+    （見 frontend AdminLayout.tsx handleUpdateRecordStatus 的說明），
+    這支端點補上真正的後端動作：approve 會改寫 verdict 為最終結果，
+    三種動作都會寄出對應內容的通知信（見 notifications.py）。
+
+    只有 verdict == "review" 的案件可以執行——通過／拒絕是自動判定，
+    結果已經確定，不需要、也不應該讓行員在這裡改動。
+    """
+    row = db.get(VerificationRecordRow, record_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="record not found")
+    if row.verdict != "review":
+        raise HTTPException(
+            status_code=400, detail="只有人工複核（review）案件可以執行這個動作"
+        )
+
+    if payload.action == "approve":
+        row.verdict = "pass"
+        row.verdict_label = "通過"
+        db.commit()
+        db.refresh(row)
+
+    applicant = db.get(Applicant, row.applicant_id)
+    email_sent = send_review_action_email(
+        applicant.email, applicant.name, payload.action, record_id=row.id
+    )
+
+    return AdminRecordActionResponse(success=True, email_sent=email_sent)

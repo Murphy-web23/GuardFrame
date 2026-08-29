@@ -10,7 +10,13 @@ import {
   mockVerificationTrend,
   mockSystemServices,
 } from '../../data/adminMockData';
-import { listAdminRecords, ApiError, BackendVerificationRecord } from '../../api/client';
+import {
+  listAdminRecords,
+  resolveAdminRecord,
+  AdminRecordAction,
+  ApiError,
+  BackendVerificationRecord,
+} from '../../api/client';
 import { getStoredAdminToken } from '../../data/mockAuth';
 import { AdminSidebar } from './AdminSidebar';
 import { AdminHeader } from './AdminHeader';
@@ -55,6 +61,7 @@ function mapBackendRecord(rec: BackendVerificationRecord): VerificationRecord {
     handlingStatus,
     durationSec: Math.round(rec.recording.durationSec),
     notes: rec.decision.reasons.length > 0 ? rec.decision.reasons.join('；') : '核驗通過',
+    vlmSummary: rec.vlmSummary,
   };
 }
 
@@ -156,50 +163,54 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ onSwitchToUserPortal, 
   const riskDistribution = computeRiskDistribution(records);
   const riskAlerts = computeRiskAlerts(stats);
 
-  // 後端目前沒有任何「行員手動更新紀錄狀態」的端點（沒有 PATCH
-  // /api/admin/records/{id} 這種東西），這裡維持原本的純前端本地狀態
-  // 變更，不假裝呼叫了後端——重新整理頁面後這個操作不會被記住，
-  // 這是後端目前真實的能力邊界，不是這次改動漏做。
-  const handleUpdateRecordStatus = (recordId: string, actionName: string) => {
+  // 2026-08-29：改成真的打後端 POST /api/admin/records/{id}/action——
+  // 之前這裡只改前端本地狀態、沒有任何後端端點，重新整理頁面後動作
+  // 就會消失，通知信也不會真的寄出。現在會先等後端回應（決定案件的
+  // 最終判定並寄出對應通知信），再依照真實結果更新本地畫面，失敗時
+  // 拋出例外讓 modal 顯示錯誤訊息，不再無條件顯示成功。
+  const handleUpdateRecordStatus = async (
+    recordId: string,
+    action: AdminRecordAction
+  ): Promise<{ emailSent: boolean }> => {
+    const token = getStoredAdminToken();
+    if (!token) {
+      throw new Error('登入憑證遺失，請重新登入');
+    }
+    const result = await resolveAdminRecord(token, recordId, action);
+
     setRecords((prev) =>
       prev.map((rec) => {
-        if (rec.id === recordId) {
-          if (actionName.includes('核准')) {
-            return {
-              ...rec,
-              verificationStatus: 'passed',
-              riskLevel: 'low',
-              handlingStatus: 'completed',
-              notes: '專員人工核准通過',
-            };
-          } else if (actionName.includes('補件')) {
-            return {
-              ...rec,
-              verificationStatus: 'flagged',
-              riskLevel: 'low',
-              handlingStatus: 'completed',
-              notes: '已發送補件通知，案件標記處理完成',
-            };
-          } else if (actionName.includes('分行')) {
-            return {
-              ...rec,
-              verificationStatus: 'flagged',
-              riskLevel: 'low',
-              handlingStatus: 'completed',
-              notes: '已通知前往實體分行辦理，案件標記處理完成',
-            };
-          } else if (actionName.includes('人工')) {
-            return {
-              ...rec,
-              verificationStatus: 'pending',
-              handlingStatus: 'manual_review',
-              notes: '已轉由人工二次審查',
-            };
-          }
+        if (rec.id !== recordId) return rec;
+        if (action === 'approve') {
+          return {
+            ...rec,
+            verificationStatus: 'passed',
+            riskLevel: 'low',
+            handlingStatus: 'completed',
+            notes: '專員人工核准通過',
+          };
+        } else if (action === 'request_docs') {
+          return {
+            ...rec,
+            verificationStatus: 'flagged',
+            riskLevel: 'low',
+            handlingStatus: 'completed',
+            notes: '已發送補件通知，案件標記處理完成',
+          };
+        } else if (action === 'branch_visit') {
+          return {
+            ...rec,
+            verificationStatus: 'flagged',
+            riskLevel: 'low',
+            handlingStatus: 'completed',
+            notes: '已通知前往實體分行辦理，案件標記處理完成',
+          };
         }
         return rec;
       })
     );
+
+    return { emailSent: result.emailSent };
   };
 
   return (

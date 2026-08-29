@@ -1,11 +1,15 @@
 """common/fusion.py 的測試。
 
-五個 track 的回傳值都用符合各自契約格式的合成 dict，不需要真的跑
+四個 track 的回傳值都用符合各自契約格式的合成 dict，不需要真的跑
 任何 analyzer，純粹驗證融合與決策的數學、reasons 組裝、對照組漏判
 標記是否正確。
 
 2026-08-19 改版：對照組/Track2-4 改成用 confidenceScore（連續信心分數）
 取代原本的二值化風險，這裡的合成 dict 也跟著加上這個欄位。
+
+2026-08-29：Track2 rPPG 停用不參與融合，這裡的測試移除所有 rppg 參數，
+改測四層。RPPG_PASS/RPPG_FAIL 這兩個合成 dict 保留在檔案裡供未來
+重新啟用時參考，但不再傳給 fusion 的任何函式。
 """
 
 import sys
@@ -74,8 +78,6 @@ def test_layer_passed_synthetic_uses_threshold_not_detected_field():
 
 
 def test_layer_passed_others_use_detected_field():
-    assert fusion._layer_passed("rppg", RPPG_PASS) is True
-    assert fusion._layer_passed("rppg", RPPG_FAIL) is False
     assert fusion._layer_passed("photometric", PHOTO_PASS) is True
     assert fusion._layer_passed("occlusion", OCC_FAIL) is False
 
@@ -102,8 +104,8 @@ def test_layer_risk_others_use_confidence_score_field():
 
 
 def test_layer_risk_clamps_confidence_score_out_of_range():
-    assert fusion._layer_risk("rppg", {"confidenceScore": 1.5}) == pytest.approx(100.0)
-    assert fusion._layer_risk("rppg", {"confidenceScore": -0.5}) == pytest.approx(0.0)
+    assert fusion._layer_risk("occlusion", {"confidenceScore": 1.5}) == pytest.approx(100.0)
+    assert fusion._layer_risk("occlusion", {"confidenceScore": -0.5}) == pytest.approx(0.0)
 
 
 def test_layer_risk_defaults_to_max_risk_when_confidence_score_missing():
@@ -117,13 +119,13 @@ def test_layer_risk_defaults_to_max_risk_when_confidence_score_missing():
 
 
 def test_compute_risk_score_all_pass_is_zero():
-    score = fusion.compute_risk_score(BASELINE_PASS, SYNTHETIC_ZERO, RPPG_PASS, PHOTO_PASS, OCC_PASS)
+    score = fusion.compute_risk_score(BASELINE_PASS, SYNTHETIC_ZERO, PHOTO_PASS, OCC_PASS)
     assert score == 0
 
 
 def test_compute_risk_score_all_fail_is_hundred():
     score = fusion.compute_risk_score(
-        BASELINE_FAIL, _synthetic(1.0), RPPG_FAIL, PHOTO_FAIL, OCC_FAIL
+        BASELINE_FAIL, _synthetic(1.0), PHOTO_FAIL, OCC_FAIL
     )
     assert score == 100
 
@@ -137,9 +139,9 @@ def test_compute_risk_score_uses_intermediate_confidence_scores():
                                    occlusionSegments=[], layerScore=0.6, anomalyFrames=[],
                                    stabilityCurve=[])
     score = fusion.compute_risk_score(
-        BASELINE_PASS, SYNTHETIC_ZERO, RPPG_PASS, PHOTO_PASS, mid_occlusion
+        BASELINE_PASS, SYNTHETIC_ZERO, PHOTO_PASS, mid_occlusion
     )
-    # 只有 occlusion 貢獻風險：0.35 權重 × 0.5 信心分數 × 100 = 17.5 → 四捨五入 18
+    # 只有 occlusion 貢獻風險：0.50 權重 × 0.5 信心分數 × 100 = 25 → 四捨五入 25
     assert score == round(config.WEIGHT_OCCLUSION * 0.5 * 100)
 
 
@@ -148,7 +150,6 @@ def test_compute_risk_score_uses_intermediate_confidence_scores():
     [
         ("baseline", config.WEIGHT_BASELINE),
         ("synthetic", config.WEIGHT_SYNTHETIC),
-        ("rppg", config.WEIGHT_RPPG),
         ("photometric", config.WEIGHT_PHOTOMETRIC),
         ("occlusion", config.WEIGHT_OCCLUSION),
     ],
@@ -157,21 +158,19 @@ def test_compute_risk_score_single_layer_failure_matches_its_weight(failing_laye
     args = {
         "baseline": BASELINE_PASS,
         "synthetic": SYNTHETIC_ZERO,
-        "rppg": RPPG_PASS,
         "photometric": PHOTO_PASS,
         "occlusion": OCC_PASS,
     }
     fail_values = {
         "baseline": BASELINE_FAIL,
         "synthetic": _synthetic(1.0),
-        "rppg": RPPG_FAIL,
         "photometric": PHOTO_FAIL,
         "occlusion": OCC_FAIL,
     }
     args[failing_layer] = fail_values[failing_layer]
 
     score = fusion.compute_risk_score(
-        args["baseline"], args["synthetic"], args["rppg"], args["photometric"], args["occlusion"]
+        args["baseline"], args["synthetic"], args["photometric"], args["occlusion"]
     )
     assert score == round(expected * 100)
 
@@ -194,14 +193,14 @@ def test_compute_verdict_boundaries():
 
 
 def test_build_reasons_empty_when_all_pass():
-    reasons = fusion.build_reasons(BASELINE_PASS, SYNTHETIC_LOW, RPPG_PASS, PHOTO_PASS, OCC_PASS)
+    reasons = fusion.build_reasons(BASELINE_PASS, SYNTHETIC_LOW, PHOTO_PASS, OCC_PASS)
     assert reasons == []
 
 
 def test_build_reasons_matches_failing_layers_in_fixed_order():
-    reasons = fusion.build_reasons(BASELINE_PASS, SYNTHETIC_LOW, RPPG_FAIL, PHOTO_PASS, OCC_FAIL)
+    reasons = fusion.build_reasons(BASELINE_PASS, SYNTHETIC_LOW, PHOTO_FAIL, OCC_FAIL)
     assert reasons == [
-        fusion._FAILURE_REASONS["rppg"],
+        fusion._FAILURE_REASONS["photometric"],
         fusion._FAILURE_REASONS["occlusion"],
     ]
 
@@ -229,7 +228,7 @@ def test_is_baseline_missed_false_when_overall_not_rejected():
 
 
 def test_fuse_decision_all_pass():
-    decision = fusion.fuse_decision(BASELINE_PASS, SYNTHETIC_ZERO, RPPG_PASS, PHOTO_PASS, OCC_PASS)
+    decision = fusion.fuse_decision(BASELINE_PASS, SYNTHETIC_ZERO, PHOTO_PASS, OCC_PASS)
     assert decision == {
         "riskScore": 0,
         "verdict": "pass",
@@ -239,14 +238,14 @@ def test_fuse_decision_all_pass():
 
 
 def test_fuse_decision_realtime_faceswap_scenario_is_rejected():
-    """比照 PLAN.md「五種攻擊情境的攔截分佈」表的「即時臉部重繪」列：
-    對照組✓／Track1✗／Track2部分✗／Track3✓／Track4✗，結果應為拒絕。
-    這是整套五層架構的論證核心（只有 Track 4 抓得到即時換臉），
-    直接用融合邏輯驗證這個結論在目前的權重下確實成立，改版後（連續
-    信心分數）依然成立。
+    """比照 PLAN.md「五種攻擊情境的攔截分佈」表的「即時臉部重繪」列
+    （對照組✓／Track1✗／Track3✓／Track4✗，Track2 已停用不計入），
+    結果應為拒絕。這是整套架構的論證核心（只有 Track 4 抓得到即時
+    換臉），直接用融合邏輯驗證這個結論在目前（四層、Track4 權重提高
+    到 0.50）的權重下依然成立。
     """
     decision = fusion.fuse_decision(
-        BASELINE_PASS, SYNTHETIC_HIGH, RPPG_FAIL, PHOTO_PASS, OCC_FAIL
+        BASELINE_PASS, SYNTHETIC_HIGH, PHOTO_PASS, OCC_FAIL
     )
     assert decision["verdict"] == "reject"
     assert fusion._FAILURE_REASONS["occlusion"] in decision["reasons"]
@@ -254,6 +253,6 @@ def test_fuse_decision_realtime_faceswap_scenario_is_rejected():
 
 def test_fuse_decision_verdict_label_matches_verdict():
     decision = fusion.fuse_decision(
-        BASELINE_FAIL, SYNTHETIC_LOW, RPPG_PASS, PHOTO_PASS, OCC_PASS
+        BASELINE_FAIL, SYNTHETIC_LOW, PHOTO_PASS, OCC_PASS
     )
     assert decision["verdictLabel"] == fusion.VERDICT_LABELS[decision["verdict"]]

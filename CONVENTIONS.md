@@ -725,6 +725,18 @@ GET  /api/admin/records?limit=50&verdict=reject
 
 GET  /api/admin/records/{id}
   Response: 200 — 單筆完整 record
+
+POST /api/admin/records/{id}/action
+  說明:     後台「發送補件通知／通知前往實體分行／確認核准通過」三顆
+            按鈕的實作（2026-08-29 新增，見 notifications.py）。只有
+            verdict == "review" 的案件可以呼叫；approve 會把該筆紀錄的
+            verdict 改為 "pass"（最終結果），三種動作都會呼叫 Resend API
+            寄出對應內容的通知信給申請人。寄信失敗不影響本次呼叫成功
+            （success 仍為 true），emailSent 會誠實回報實際寄送結果。
+  Request:  { action: "approve" | "request_docs" | "branch_visit" }
+  Response: 200 — { success: true, emailSent: boolean }
+            400 — 該筆紀錄 verdict 不是 "review"
+            404 — 找不到該筆紀錄
 ```
 
 ## 5.6 前台六步驟流程（對應 PRD F1-F7）

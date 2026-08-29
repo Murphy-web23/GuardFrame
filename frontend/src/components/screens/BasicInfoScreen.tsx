@@ -40,7 +40,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
   const [idNumber, setIdNumber] = useState<string>(formData.idNumber || defaultMockOcrData.idNumber);
   const [birthday, setBirthday] = useState<string>(formData.birthday || defaultMockOcrData.birthday);
   const [phone, setPhone] = useState<string>(formData.phone || defaultMockOcrData.phone);
-  const [email, setEmail] = useState<string>(formData.email || 'user@example.com');
+  const [email, setEmail] = useState<string>(formData.email || 'sp01070608@gmail.com');
   const [address, setAddress] = useState<string>(formData.address || defaultMockOcrData.address);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -61,7 +61,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
     const newErrors: Record<string, string> = {};
 
     if (!fullName.trim() || !validateFullName(fullName)) {
-      newErrors.fullName = '請輸入完整中文姓名';
+      newErrors.fullName = '請輸入完整真實姓名';
     }
     if (!idNumber.trim() || !validateTaiwanId(idNumber)) {
       newErrors.idNumber = '請輸入正確的身分證字號';
@@ -92,7 +92,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
         idNumber,
         birthDate: birthday,
         phone,
-        email: email || 'user@example.com',
+        email: email || 'sp01070608@gmail.com',
         address,
       });
 
@@ -147,7 +147,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
       <div className="space-y-3.5 flex-1">
         {/* Full Name */}
         <div className="space-y-1">
-          <label className="text-xs font-bold text-slate-700">中文姓名</label>
+          <label className="text-xs font-bold text-slate-700">真實姓名</label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
               <User className="h-4 w-4" />

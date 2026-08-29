@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { getChallengeOrder, verifyFace, ApiError, ChallengeOrderItem, RecordingPhases } from '../../api/client';
 import { MOBILE_AUDIO_CUE_ACTION, MOBILE_AUDIO_CUE_SUCCESS } from '../../utils/mobileAudioCues';
+import { detectCameraSourceType, CameraSourceType } from '../../lib/cameraSource';
 import {
   ACTION_DURATIONS_SEC,
   RECORDING_FPS,
@@ -187,6 +188,9 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // 送出 /verify 時要標記的鏡頭來源，startCamera() 拿到 stream 後才算得出來，
+  // 見 lib/cameraSource.ts。
+  const cameraSourceTypeRef = useRef<CameraSourceType>('實體相機');
 
   // 真的錄影＋上傳 /verify 用的狀態。timelineRef 在按下「開始驗證」的
   // 當下一次算好（見 handleStartVerification），之後動作/燈光階段只是
@@ -403,12 +407,22 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         // 貼近後端實際分析的畫面。如果要退回原本的橫向設定，把這個
         // aspectRatio 區塊拿掉、width/height 改回 1280/720（桌面）或
         // 720/960（手機）即可。
+        //
+        // 2026-08-28：手機版 0.6 這個比例太窄，真人測試回報前鏡頭「放
+        // 大」很多，要把手機拿遠才能讓全臉入鏡，連帶照明測試階段因為
+        // 拿遠也照不到反光。懷疑是部分手機鏡頭為了滿足這麼窄的裁切
+        // 比例，選擇用數位變焦裁切畫面中央，而不是單純裁掉左右兩側。
+        // 放寬到 0.75（沒有 #camera-first-viewfinder 那麼窄，但比原本
+        // 0.6 溫和很多），視野會比較自然，容器本身還是 object-cover
+        // 撐滿框，faceRatio 對不齊的風險沒有完全消失、但應該比原本
+        // 0.6 好，之後如果真人測試發現 faceRatio 又出問題，這是第一個
+        // 要回頭檢查的地方。
         const constraints: MediaStreamConstraints = {
           video: {
             facingMode: 'user',
             width: { ideal: isDesktop ? 864 : 660 },
             height: { ideal: isDesktop ? 1080 : 1100 },
-            aspectRatio: { ideal: isDesktop ? 0.8 : 0.6 },
+            aspectRatio: { ideal: isDesktop ? 0.8 : 0.75 },
             // 要求瀏覽器盡量用固定的 fps 錄——後端切影格區間時是用這個
             // 事先宣告的 fps 算的（見 verificationRecording.ts 頂部
             // 的說明），沒有這個限制的話瀏覽器選的 fps 可能落差很大。
@@ -419,6 +433,9 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         streamRef.current = stream;
+        cameraSourceTypeRef.current = detectCameraSourceType(
+          stream.getVideoTracks()[0]?.label
+        );
         setCameraActive(true);
         setUseSimulatedFeed(false);
 
@@ -443,6 +460,9 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
       setCameraErrorMsg(err?.message || '未能獲取相機授權');
       setCameraActive(true);
       setUseSimulatedFeed(true);
+      // 沒能拿到真的鏡頭 stream，走的是模擬畫面，不是真人裝置錄的內容，
+      // 標記為虛擬攝影機比標成實體相機更貼近事實。
+      cameraSourceTypeRef.current = '虛擬攝影機';
     }
   };
 
@@ -568,30 +588,15 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
     speakPrompt('請保持臉部不動。', 'track3_holding');
     setPhotoSubState('analyzing');
 
-    // 2026-08-28：真人測試發現 Track3 correlation 持續量不到（不是動作
-    // 問題，使用者這幾次都沒動）——把實際光照曲線拉出來看，發現螢幕
-    // 燈光是階梯狀瞬間跳變，但臉部反射曲線卻是平滑的單一起伏，完全
-    // 沒跟著跳變走。懷疑是手機鏡頭的自動曝光/自動白平衡在偵測到亮度
-    // 變化時會主動「拉平」畫面亮度（花 0.5~2 秒調整），這正好把我們
-    // 想量的訊號本身撫平掉了。這裡嘗試在進入照明測試前鎖定曝光/白
-    // 平衡在目前的值，減少鏡頭自己介入的干擾。**只有 Chrome/Android
-    // 系瀏覽器支援這組 MediaTrackConstraints，iOS Safari 完全不支援
-    // 、規格明文規定不支援的約束會被悄悄忽略、不會報錯**——這是已知
-    // 的平台限制，iOS 手機不會因此變差，但也不會變好。
-    try {
-      const videoTrack = streamRef.current?.getVideoTracks()[0];
-      const supported = navigator.mediaDevices.getSupportedConstraints() as Record<string, boolean>;
-      if (videoTrack) {
-        if (supported.exposureMode) {
-          (videoTrack.applyConstraints({ advanced: [{ exposureMode: 'manual' } as any] }) as Promise<void>).catch(() => {});
-        }
-        if (supported.whiteBalanceMode) {
-          (videoTrack.applyConstraints({ advanced: [{ whiteBalanceMode: 'manual' } as any] }) as Promise<void>).catch(() => {});
-        }
-      }
-    } catch (_) {
-      // 鎖定失敗（裝置/瀏覽器不支援）不影響主流程，安靜略過即可。
-    }
+    // 2026-08-28：試過在這裡鎖定鏡頭曝光/白平衡（懷疑自動曝光會撫平
+    // Track3 想量的反光訊號），但沒多久真人手機測試就回報「Step5
+    // 設定開戶服務功能」畫面卡住滑不動，時間點剛好對得上（同一天新
+    // 加的改動，鏡頭約束變更在 Android 上本來就容易讓鏡頭/GPU
+    // pipeline 不穩定，殘留影響可能拖到下一個畫面才顯現）。這個功能
+    // 本身的效果（Track3 correlation 有沒有真的改善）都還沒實測驗證
+    // 過，卻先確定引發一個影響使用體驗的 bug，移除，不值得為了未確認
+    // 的好處保留一個確定的問題。之後如果想再嘗試，建議先在獨立測試
+    // 頁面驗證穩定性，不要直接跟正式驗證流程綁在一起。
 
     // 2026-08-25：phases.lighting 送給後端的影格範圍要用「照明序列真正
     // 開始播放」那一刻實測的經過時間，不用事先算好的理論值，兩者常常
@@ -627,21 +632,6 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
     }, totalLightMs);
 
     const stopRecordingTimer = setTimeout(() => {
-      // 照明測試階段結束，把鏡頭曝光/白平衡改回自動——鎖定只是為了
-      // 這段測試不被鏡頭自己的調整干擾，不該影響後續任何畫面。
-      try {
-        const videoTrack = streamRef.current?.getVideoTracks()[0];
-        const supported = navigator.mediaDevices.getSupportedConstraints() as Record<string, boolean>;
-        if (videoTrack) {
-          if (supported.exposureMode) {
-            (videoTrack.applyConstraints({ advanced: [{ exposureMode: 'continuous' } as any] }) as Promise<void>).catch(() => {});
-          }
-          if (supported.whiteBalanceMode) {
-            (videoTrack.applyConstraints({ advanced: [{ whiteBalanceMode: 'continuous' } as any] }) as Promise<void>).catch(() => {});
-          }
-        }
-      } catch (_) {}
-
       // 停止錄影，onstop（在下面的 processing effect 裡等待）會 flush
       // 出最後一段資料，接著才真的組 payload 呼叫 /verify。
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -744,15 +734,22 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         // Tunnel 這類 proxy 中途判定逾時掐斷連線。真正的 verdict（pass
         // /review/reject）留到 TermsSubmitScreen 送出開戶設定前才向
         // GET /verify-result 輪詢取得，見 client.ts waitForVerifyResult()。
-        await verifyFace(applicantId, sessionId, videoBlob, lightLog, {
-          challenges: backendOrderRef.current,
-          recording: {
-            durationSec: totalMs / 1000,
-            fps: RECORDING_FPS,
-            totalFrames: msToFrame(totalMs),
-            phases,
+        await verifyFace(
+          applicantId,
+          sessionId,
+          videoBlob,
+          lightLog,
+          {
+            challenges: backendOrderRef.current,
+            recording: {
+              durationSec: totalMs / 1000,
+              fps: RECORDING_FPS,
+              totalFrames: msToFrame(totalMs),
+              phases,
+            },
           },
-        });
+          cameraSourceTypeRef.current
+        );
         if (cancelled) return;
 
         setOverallStage('success');

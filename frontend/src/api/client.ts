@@ -211,7 +211,12 @@ export async function verifyFace(
   video: Blob,
   lightLog: LightLog,
   challenges: ChallengesPayload,
-  sourceType: string = '虛擬攝影機'
+  // 2026-08-29：舊預設值寫死是 '虛擬攝影機'，但唯一的呼叫端從沒傳這個
+  // 參數，導致資料庫裡所有紀錄的 source_type 都是這個假值，跟使用者
+  // 實際用的鏡頭完全無關。呼叫端現在會用 lib/cameraSource.ts 偵測
+  // 裝置標籤傳進來，這裡的預設值只在真的沒傳時當保底，改成語意正確的
+  // 「未知」。
+  sourceType: string = '未知'
 ): Promise<VerifySubmitAck> {
   const form = new FormData();
   const ext = video.type.includes('mp4') ? 'mp4' : 'webm';
@@ -307,6 +312,15 @@ export interface BackendVerificationRecord {
     verdictLabel: string;
     reasons: string[];
   };
+  // 2026-08-29：只有 verdict=review 的案件才會有值（見 vlm_summary/
+  // summarizer.py），其餘案件是 null——後端 Optional[VlmSummary]。
+  vlmSummary: {
+    available: boolean;
+    frameObservations: { timestampSec: number; observation: string }[];
+    summary: string;
+    model: string;
+    latencyMs: number;
+  } | null;
   accountResult: 'pending_setup' | 'opened' | 'pending' | 'rejected';
 }
 
@@ -329,5 +343,22 @@ export async function getAdminRecord(
 ): Promise<BackendVerificationRecord> {
   return request(`/api/admin/records/${recordId}`, {
     headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+// 後台人工複核案件的行員動作（發送補件通知／通知前往實體分行／確認核准
+// 通過）。只有 verdict 為 'review' 的案件能呼叫，approve 以外的動作不會
+// 改變案件的判定結果，純粹寄出對應通知信（見後端 notifications.py）。
+export type AdminRecordAction = 'approve' | 'request_docs' | 'branch_visit';
+
+export async function resolveAdminRecord(
+  token: string,
+  recordId: string | number,
+  action: AdminRecordAction
+): Promise<{ success: boolean; emailSent: boolean }> {
+  return request(`/api/admin/records/${recordId}/action`, {
+    method: 'POST',
+    headers: jsonHeaders({ Authorization: `Bearer ${token}` }),
+    body: JSON.stringify({ action }),
   });
 }

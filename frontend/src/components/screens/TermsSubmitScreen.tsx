@@ -156,7 +156,7 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
 
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div>
-              <span className="text-[10px] text-slate-400">中文姓名</span>
+              <span className="text-[10px] text-slate-400">真實姓名</span>
               <p className="font-bold text-slate-800">{formData.fullName || '林語堂'}</p>
             </div>
             <div>

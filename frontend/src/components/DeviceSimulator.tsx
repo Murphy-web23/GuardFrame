@@ -18,7 +18,15 @@ interface DeviceSimulatorProps {
 }
 
 export const DeviceSimulator: React.FC<DeviceSimulatorProps> = ({ children }) => {
-  // 跟 App.tsx 同一個理由：min-h-screen（100vh）在 Android 網址列
-  // 展開/收合時會跟實際可視區域對不上，換成 min-h-dvh。
-  return <div className="min-h-dvh bg-slate-100 text-slate-800 antialiased">{children}</div>;
+  // 跟 App.tsx 同一個理由：不依賴 vh/dvh 這類 CSS 視窗單位（Android
+  // Chrome 上實測不穩，見 App.tsx 那個 --app-height useEffect 的
+  // 說明），改用 JS 量出來的 --app-height CSS 變數。
+  return (
+    <div
+      className="bg-slate-100 text-slate-800 antialiased"
+      style={{ height: 'var(--app-height, 100vh)' }}
+    >
+      {children}
+    </div>
+  );
 };
