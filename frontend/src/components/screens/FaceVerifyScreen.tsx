@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FormData } from '../../types';
 import { FaceVerificationEngine } from '../face/FaceVerificationEngine';
 import { PhotometricConsentNotice } from '../face/PhotometricConsentNotice';
+import { ActionsDemoPreview } from '../face/ActionsDemoPreview';
 import { ShieldCheck, Info } from 'lucide-react';
 
 interface FaceVerifyScreenProps {
@@ -18,13 +19,18 @@ export const FaceVerifyScreen: React.FC<FaceVerifyScreenProps> = ({
   // NFR-13：照明挑戰前要先事前告知，使用者確認後才進入真的錄影流程
   // （見 PhotometricConsentNotice.tsx 頂部的說明）。
   const [hasAcknowledged, setHasAcknowledged] = useState(false);
+  // 2026-08-29：正式開始錄影前，先給使用者看一次四個動作的動畫示範
+  // （見 ActionsDemoPreview.tsx），排在 PhotometricConsentNotice 之後。
+  const [hasSeenDemo, setHasSeenDemo] = useState(false);
 
-  const handleVerificationComplete = (confidence: number, photometricPassed = true) => {
+  // 2026-08-25：/verify 改非同步後，這裡只代表「錄影已成功送出」，
+  // 真正的 verdict 還沒出來（見 FaceVerificationEngine.tsx 的說明），
+  // 先標記 'pending'，真正的值等 TermsSubmitScreen 送出開戶設定前
+  // 才輪詢取得。
+  const handleVerificationComplete = () => {
     updateFormData({
       faceVerified: true,
-      faceConfidence: confidence,
-      photometricPassed: photometricPassed,
-      photometricScore: confidence,
+      verificationVerdict: 'pending',
     });
   };
 
@@ -60,6 +66,8 @@ export const FaceVerifyScreen: React.FC<FaceVerifyScreenProps> = ({
       <div className="w-full flex-1 flex flex-col items-center justify-center">
         {!hasAcknowledged ? (
           <PhotometricConsentNotice onAcknowledge={() => setHasAcknowledged(true)} />
+        ) : !hasSeenDemo ? (
+          <ActionsDemoPreview onStart={() => setHasSeenDemo(true)} />
         ) : (
           <FaceVerificationEngine
             applicantId={formData.applicantId}

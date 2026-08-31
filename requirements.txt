@@ -45,3 +45,17 @@ bcrypt==4.0.1
 jupyter==1.1.1
 tqdm==4.70.0
 pytest==9.1.1
+
+# 2026-08-29：地端 VLM（vlm_summary/summarizer.py）走 Ollama 的本機 HTTP
+# API（預設 http://localhost:11434），不是雲端服務，requests 只是拿來打
+# 這個本機端點。Ollama 本身跟模型檔案（qwen2.5vl:3b）要另外裝，不算
+# Python 依賴，見 vlm_summary/README.md。
+requests==2.32.5
+
+# 2026-08-28：證件角點偵測用的 YOLO-pose 模型（見 id_card_detector/
+# README.md、image_utils/id_card.py 的 _find_quad_ml() 說明）——**選用**
+# 依賴，沒裝不會壞掉。`config.ID_CARD_USE_ML_DETECTOR` 開著但這個套件
+# 沒裝時，`_get_id_card_pose_model()` 會自動退回古典 CV 方法，只是
+# 想跑 ML 路徑（或想用 id_card_detector/train_colab.ipynb 訓練模型）
+# 才需要裝這個。
+ultralytics==8.4.131

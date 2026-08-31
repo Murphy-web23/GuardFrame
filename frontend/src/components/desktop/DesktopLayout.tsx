@@ -283,7 +283,7 @@ export const DesktopLayout: React.FC<DesktopLayoutProps> = ({
                 </div>
                 <p className="text-[11px] text-sky-800 mt-0.5 leading-relaxed font-medium">
                   {currentStep === 'welcome' && '歡迎！全程約需 3 分鐘，準備好身分證就可以開始囉。'}
-                  {currentStep === 'basic_info' && '請確保填寫姓名與身分證一致，方便後續 OCR 自動核驗。'}
+                  {currentStep === 'basic_info' && '請確保填寫姓名與身分證一致，方便後續自動核驗。'}
                   {currentStep === 'sms_verify' && '已發送安全驗證碼至你的手機，請於 60 秒內輸入。'}
                   {currentStep === 'id_upload' && '可自由選擇拍照或上傳證件圖檔，請確認文字清晰、四角完整無反光。'}
                   {currentStep === 'face_verify' && '正在進行 23 秒動態防偽核驗，請配合畫面微動作。'}

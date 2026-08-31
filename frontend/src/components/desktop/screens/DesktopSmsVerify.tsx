@@ -38,9 +38,19 @@ export const DesktopSmsVerify: React.FC<DesktopSmsVerifyProps> = ({
     setPhase('input_code');
   };
 
+  // 2026-08-22：跟 SmsVerifyScreen.tsx（手機版）同樣的修法，見那邊的
+  // 說明——原本沒寫進 formData，導致「確認個人資料」步驟示範資料
+  // 選到不同一組人，姓名/身分證跟這裡實際驗證的手機號碼對不上。
   const handleSelectDemoUser = (user: DemoUser) => {
     setPhoneInput(user.phone);
     setPhoneError('');
+    updateFormData({
+      fullName: user.fullName,
+      idNumber: user.idNumber,
+      birthday: user.birthday,
+      email: user.email,
+      address: user.address,
+    });
   };
 
   const handleDigitChange = (index: number, val: string) => {

@@ -59,6 +59,7 @@ def extract_frames(video_path, target_fps=None):
 
         frames = []
         index = 0
+        last_pos_msec = 0.0
         while True:
             ok, frame_bgr = cap.read()
             if not ok:
@@ -66,6 +67,21 @@ def extract_frames(video_path, target_fps=None):
             if index % step == 0:
                 frames.append(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
             index += 1
+            last_pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+
+        # 暫時的診斷 log（2026-08-21）：容器中繼資料宣告的 fps 不一定等於
+        # 實際錄影達成的 fps（尤其瀏覽器端 MediaRecorder），這裡額外算一次
+        # 「格數 ÷ 影片實際時長」作對照，純粹多印一行，不影響回傳值或任何
+        # 判斷邏輯。等確認真的有落差、且落差有意義後再考慮要不要拿這個數字
+        # 去做格數換算修正，見 PHASE1_NOTES.md fps 假設風險章節。
+        if last_pos_msec > 0:
+            measured_fps = index / (last_pos_msec / 1000.0)
+            drift_pct = abs(measured_fps - source_fps) / source_fps * 100 if source_fps else 0.0
+            print(
+                f"[fps 診斷] {path.name}：容器聲稱 fps={source_fps:.2f}，總格數={index}，"
+                f"量到時長={last_pos_msec / 1000.0:.2f}s，換算實測 fps={measured_fps:.2f}"
+                f"（落差 {drift_pct:.1f}%）"
+            )
 
         return frames, float(output_fps)
     finally:

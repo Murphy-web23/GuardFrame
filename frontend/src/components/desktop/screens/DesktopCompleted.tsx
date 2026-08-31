@@ -41,15 +41,31 @@ export const DesktopCompleted: React.FC<DesktopCompletedProps> = ({
           >
             <CheckCircle2 className="h-9 w-9 stroke-[2.5]" />
           </motion.div>
+          {/* 2026-08-25：見 CompletedScreen.tsx（mobile 版）同一段
+              說明——terms_submit 不再卡著等背景複核結果，桌面版走到
+              這個畫面時 verificationVerdict 幾乎都還是 'pending'，文案
+              要誠實反映「還在核實」，不能預設已通過。*/}
           <div>
             <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200">
-              開戶申請已送出
+              {formData.verificationVerdict === 'review'
+                ? '申請案件已受理，待人工複核'
+                : formData.verificationVerdict === 'reject'
+                ? '申請案件複核未通過'
+                : '開戶申請已送出'}
             </span>
             <h1 className="text-2xl font-black text-slate-900 tracking-tight mt-1.5">
-              開戶申請已完成送審
+              {formData.verificationVerdict === 'review'
+                ? '開戶申請已送出，正在人工複核'
+                : formData.verificationVerdict === 'reject'
+                ? '本次身分驗證複核未通過'
+                : '開戶申請已完成送審'}
             </h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              感謝您的申請！我們已收到您的開戶資料，審核結果將透過簡訊與 Email 第一時間通知您。
+              {formData.verificationVerdict === 'review'
+                ? '感謝您的申請！本次人臉驗證系統判定需要人工複核，我們已收到您的完整資料，複核結果將透過簡訊與 Email 第一時間通知您。'
+                : formData.verificationVerdict === 'reject'
+                ? '很抱歉，系統複核後判定本次身分驗證未通過，開戶設定尚未完成。請洽客服或重新提出申請。'
+                : '感謝您的申請！我們已收到您的開戶資料，系統正在進行最後複核，審核結果將透過簡訊與 Email 第一時間通知您。'}
             </p>
           </div>
         </div>

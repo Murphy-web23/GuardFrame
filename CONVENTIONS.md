@@ -20,19 +20,19 @@ GuardFrame：銀行 B2B 驗證引擎，嵌入數位開戶流程，針對**即時
 
 **前台六步驟流程**：①基本資料 → ②簡訊驗證（啟動 15 分鐘全域倒數）→ ③證件上傳與矯正 → ④人臉驗證（固定約 23 秒）→ ⑤帳戶設定 → ⑥結果。詳見 §5.6。
 
-**人臉驗證固定約 23 秒**（動作挑戰 20 秒 + 照明挑戰 3 秒），四動作播滿全長不提前結束，此設計同時保證 rPPG 有足夠訊號長度。系統以五條獨立證據線判斷是否為真人現場拍攝、且未經即時換臉：
+**人臉驗證固定約 23 秒**（動作挑戰 20 秒 + 照明挑戰 3 秒），四動作播滿全長不提前結束。系統以四條獨立證據線判斷是否為真人現場拍攝、且未經即時換臉：
 
 | 層 | 判斷什麼 | 負責 |
 |---|---|---|
 | 對照組 | 有沒有依序完成四項指定動作 | B |
 | Track 1 | 這張臉是不是 AI 生成的 | A |
-| Track 2 | 這個人有沒有心跳（rPPG） | B |
+| ~~Track 2~~ | ~~這個人有沒有心跳（rPPG）~~ **2026-08-29 停用，不參與風險融合**（實測消費級鏡頭訊噪比無法穩定達標，見 `track2_rppg/analyzer.py::disabled_result()`） | B |
 | Track 3 | 這段影像是不是現場拍的（照明響應） | B |
 | Track 4 | 遮擋時身分特徵有沒有斷掉 | B |
 
-**設計核心：各層的失效條件互不重疊。** 攻擊者要繞過，必須同時解決五個不同性質的技術問題。
+**設計核心：各層的失效條件互不重疊。** 攻擊者要繞過，必須同時解決四個不同性質的技術問題。
 
-**Track 4（遮擋一致性）是核心防禦層，五層權重中設為最高（見 §8）。** 理由：即時換臉攻擊能通過動作挑戰（真人操作）、能通過照明挑戰（人真的在現場，光真的照得到臉），**唯有遮擋層——手掃過臉時換臉演算法的管線斷裂——能抓到這類攻擊**。這是本專題相對現有商用方案的差異化重點，其餘四層為輔助與基礎過濾。
+**Track 4（遮擋一致性）是核心防禦層，四層權重中設為最高（見 §8）。** 理由：即時換臉攻擊能通過動作挑戰（真人操作）、能通過照明挑戰（人真的在現場，光真的照得到臉），**唯有遮擋層——手掃過臉時換臉演算法的管線斷裂——能抓到這類攻擊**。這是本專題相對現有商用方案的差異化重點，其餘三層為輔助與基礎過濾。
 
 ---
 
@@ -55,6 +55,7 @@ GuardFrame：銀行 B2B 驗證引擎，嵌入數位開戶流程，針對**即時
 | 人臉偵測、對齊、身分嵌入 | InsightFace（SCRFD + ArcFace） | DeepFace、dlib、face_recognition |
 | 臉部與手部關鍵點 | MediaPipe | dlib 68 點 |
 | 影像處理 | OpenCV | PIL 為主的方案 |
+| 證件角點偵測（§4.7，僅限此用途） | YOLO11n-pose（Ultralytics，自訓練 4 點 keypoint 模型），純古典 CV（Canny＋輪廓）為自動 fallback，兩者並存 | 不做一般物件偵測；不用更大量級的 YOLO 模型（CPU 推論考量） |
 | 訊號處理 | SciPy | 自行實作 FFT |
 | 深度學習 | PyTorch | TensorFlow |
 | 視覺基礎模型（Track 1，見 §3.2） | google/siglip2-base-patch16-224（**凍結**，現行主線） | 從頭訓練 CNN、Xception 微調 |
@@ -70,7 +71,7 @@ GuardFrame：銀行 B2B 驗證引擎，嵌入數位開戶流程，針對**即時
 
 ## 3.1 LLM 的使用限制
 
-**主流程不使用 LLM 做任何判定。** VLM 摘要模組（§4.2）為產品完整版本之核心功能，僅於人工複核案件觸發，且不參與判定、不影響風險分數。因需額外部署地端模型，於四週開發期程中排序在後，優先確保五層防禦主體完成後再行實作，但不屬於可拿掉的加分項。
+**主流程不使用 LLM 做任何判定。** VLM 摘要模組（§4.2）為產品完整版本之核心功能，僅於人工複核案件觸發，且不參與判定、不影響風險分數。因需額外部署地端模型，於四週開發期程中排序在後，優先確保四層防禦主體完成後再行實作，但不屬於可拿掉的加分項。
 
 理由：專題需要可量化的機率輸出以計算 AUC、ROC、FAR/FRR，LLM 輸出文字判斷無法支撐這些指標；且 deepfake 破綻在像素級高頻紋理，正是 VLM 相對不敏感之處。
 
@@ -110,7 +111,7 @@ Track 1 只能判斷「畫面內容本身有無生成或操縱痕跡」，**無�
 
 因此對於「臉是真的、背景是真的、畫面完全乾淨，但整段是預錄影片被注入系統」這類攻擊，Track 1 預期會判為正常——這是架構設計的預期結果，不是 Track 1 的缺陷。該情境由對照組動作挑戰與 Track 3 照明響應負責偵測。
 
-完整的八種攻擊情境與五層防線對應表見 `04_SRS_系統需求規格書.md` §一之二。撰寫報告或說明系統能力時，不得把 Track 1 的分數當作「活體偵測」或「是否為真人現場」的證據。
+完整的八種攻擊情境與四層防線對應表見 `04_SRS_系統需求規格書.md` §一之二（Track 2 已停用，該表仍保留其欄位供歷史參考）。撰寫報告或說明系統能力時，不得把 Track 1 的分數當作「活體偵測」或「是否為真人現場」的證據。
 
 ---
 
@@ -160,7 +161,7 @@ def summarize_verification(record: dict, anomaly_images: list) -> dict:
 
     參數:
         record: dict
-            完整驗證紀錄（五層分數皆已計算完成）
+            完整驗證紀錄（四層分數皆已計算完成）
         anomaly_images: list[np.ndarray]
             Track 4 回傳的 anomalyFrames 對應的原始影格，通常 3-5 張
             由 B 依索引取出後傳入
@@ -178,7 +179,7 @@ def summarize_verification(record: dict, anomaly_images: list) -> dict:
 
     實作要點:
         - 逐格提問只問「觀察到什麼」，不問「是不是偽造」
-          判定由五層負責，VLM 只做描述，以降低幻覺
+          判定由四層負責，VLM 只做描述，以降低幻覺
         - 不參與判定，不影響 riskScore 與 verdict
         - 執行失敗時回傳 available=False，前端隱藏該區塊
     """
@@ -383,9 +384,21 @@ def rectify_id_card(image: np.ndarray) -> dict:
         }
 
     實作要點:
-        - 灰階 → 高斯模糊 → Canny → findContours → 依面積排序
-        - approxPolyDP 逼近四邊形，須確認頂點數為 4
-        - 角點依左上/右上/右下/左下排序後才能做透視變換
+        - 2026-08-28 起改為雙路徑，優先用 YOLO11n-pose（自訓練，4 個
+          角點當 keypoint 直接學）偵測四角；模型不可用、偵測不到、
+          或信心低於 config.ID_CARD_ML_MIN_CONFIDENCE 時，自動退回
+          原本的古典 CV 路徑（灰階 → 高斯模糊 → Canny → 膚色遮罩濾除
+          → findContours → 依面積排序 → approxPolyDP 逼近四邊形 →
+          依形心角度排序四角），兩條路徑都保留，用
+          config.ID_CARD_USE_ML_DETECTOR 開關切換，細節見
+          id_card_detector/README.md 與 image_utils/id_card.py 內的
+          說明
+        - 改用 ML 路徑的理由：古典方法對「手指蓋住卡片一角」這種遮擋
+          情況天生做不到「猜出被遮住的角落在哪」，因為 Canny 在那個
+          角落完全沒有邊界資訊可用；YOLO-pose 是從整張卡片形狀學出來的
+          關鍵點模型，可以依其餘三個角與卡片比例推斷被遮住的角落座標
+        - 兩條路徑找到角點後的後續步驟共用：角點須排序為左上/右上/
+          右下/左下才能做透視變換
         - 找不到四邊形時，rectified 與 corners 皆回傳 None，success=False，
           並附上清楚的 message（例如「未偵測到證件邊界，請重新拍攝」），
           前端僅顯示此訊息，不顯示任何影像。不可拋例外
@@ -712,6 +725,18 @@ GET  /api/admin/records?limit=50&verdict=reject
 
 GET  /api/admin/records/{id}
   Response: 200 — 單筆完整 record
+
+POST /api/admin/records/{id}/action
+  說明:     後台「發送補件通知／通知前往實體分行／確認核准通過」三顆
+            按鈕的實作（2026-08-29 新增，見 notifications.py）。只有
+            verdict == "review" 的案件可以呼叫；approve 會把該筆紀錄的
+            verdict 改為 "pass"（最終結果），三種動作都會呼叫 Resend API
+            寄出對應內容的通知信給申請人。寄信失敗不影響本次呼叫成功
+            （success 仍為 true），emailSent 會誠實回報實際寄送結果。
+  Request:  { action: "approve" | "request_docs" | "branch_visit" }
+  Response: 200 — { success: true, emailSent: boolean }
+            400 — 該筆紀錄 verdict 不是 "review"
+            404 — 找不到該筆紀錄
 ```
 
 ## 5.6 前台六步驟流程（對應 PRD F1-F7）
@@ -866,12 +891,20 @@ guardframe/
 │   ├── id_card.py              ← 對外入口：rectify_id_card()
 │   └── quality.py              ← 對外入口：check_image_quality()
 │
+├── id_card_detector/           ← B 專屬，證件角點 YOLO-pose 模型
+│   ├── dataset/                ← 訓練圖片與標註（不進 git，.gitkeep 保留結構）
+│   ├── weights/best.pt         ← 訓練好的權重（不進 git）
+│   ├── train_colab.ipynb       ← 訓練 notebook
+│   ├── convert_cvat_to_yolo.py ← 標註格式轉換工具
+│   ├── test_model.py           ← 驗證用一次性腳本，非正式系統一部分
+│   └── README.md               ← 標註格式、訓練指令、與 id_card.py 的接法
+│
 ├── common/                     ← 共用，修改前須告知對方
 │   ├── __init__.py
 │   ├── face_utils.py           ← 抽影格、InsightFace 偵測與對齊
 │   ├── landmarks.py            ← MediaPipe 封裝
 │   ├── schemas.py              ← Pydantic 模型
-│   └── fusion.py               ← 五層分數融合與決策
+│   └── fusion.py               ← 四層分數融合與決策
 │
 ├── api/                        ← B 專屬
 │   ├── main.py
@@ -902,7 +935,7 @@ guardframe/
 | 資料夾 | 誰可以改 |
 |---|---|
 | `track1_synthetic/`、`vlm_summary/` | 只有 A |
-| `track2_rppg/`、`track3_photometric/`、`track4_occlusion/`、`baseline_challenge/`、`image_utils/`、`api/`、`frontend/` | 只有 B |
+| `track2_rppg/`、`track3_photometric/`、`track4_occlusion/`、`baseline_challenge/`、`image_utils/`、`id_card_detector/`、`api/`、`frontend/` | 只有 B |
 | `common/`、`config.py` | 兩人皆可，但**修改前必須先講一聲** |
 
 `common/` 是最容易產生衝突的地方。要改先問對方。
@@ -994,9 +1027,12 @@ OCC_MAX_DROP_THRESHOLD     = 0.20
 OCC_LAYER_SCORE_MIN        = 0.50
 
 # 五層權重（Track 4 為核心防禦層，權重最高；實測後於階段4依 ROC 校準微調）
+# 2026-08-29 補充：Track 2 已停用，WEIGHT_RPPG 不再被 common/fusion.py
+# 的 WEIGHTS 字典使用，實際生效的是下面四個權重；此處保留原始五層數值
+# 作歷史對照，不代表現行融合公式。
 WEIGHT_BASELINE    = 0.10
 WEIGHT_SYNTHETIC   = 0.20
-WEIGHT_RPPG        = 0.15
+WEIGHT_RPPG        = 0.15  # 已停用，不參與融合
 WEIGHT_PHOTOMETRIC = 0.20
 WEIGHT_OCCLUSION   = 0.35
 

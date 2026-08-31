@@ -14,6 +14,18 @@ track1_synthetic/weights/
 *.pth
 *.onnx
 
+# 證件角點偵測（YOLO-pose）訓練資料跟權重——標註圖片/權重檔是大型
+# 二進位檔，不進 git，同 track1_synthetic/weights/ 的做法；.gitkeep
+# 讓空資料夾結構本身還是進 git，見 id_card_detector/README.md
+/id_card_detector/dataset/images/*/*
+!/id_card_detector/dataset/images/*/.gitkeep
+/id_card_detector/dataset/labels/*/*
+!/id_card_detector/dataset/labels/*/.gitkeep
+/id_card_detector/weights/*
+!/id_card_detector/weights/.gitkeep
+/id_card_detector/test_predictions/
+/id_card_detector/id_card_dataset.zip
+
 # 第三方模型檔（MediaPipe .task、InsightFace buffalo_l 等），用雲端硬碟共享
 /models/
 *.task
@@ -21,6 +33,10 @@ track1_synthetic/weights/
 # 開發環境雜項
 .pytest_cache/
 .ipynb_checkpoints/
+frontend/.vite/
+
+# 簡報素材，本機用，不進 git
+/mascot_assets/
 .vscode/
 .idea/
 

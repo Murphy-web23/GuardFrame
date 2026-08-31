@@ -40,7 +40,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
   const [idNumber, setIdNumber] = useState<string>(formData.idNumber || defaultMockOcrData.idNumber);
   const [birthday, setBirthday] = useState<string>(formData.birthday || defaultMockOcrData.birthday);
   const [phone, setPhone] = useState<string>(formData.phone || defaultMockOcrData.phone);
-  const [email, setEmail] = useState<string>(formData.email || 'user@example.com');
+  const [email, setEmail] = useState<string>(formData.email || 'sp01070608@gmail.com');
   const [address, setAddress] = useState<string>(formData.address || defaultMockOcrData.address);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -61,7 +61,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
     const newErrors: Record<string, string> = {};
 
     if (!fullName.trim() || !validateFullName(fullName)) {
-      newErrors.fullName = '請輸入完整中文姓名';
+      newErrors.fullName = '請輸入完整真實姓名';
     }
     if (!idNumber.trim() || !validateTaiwanId(idNumber)) {
       newErrors.idNumber = '請輸入正確的身分證字號';
@@ -92,7 +92,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
         idNumber,
         birthDate: birthday,
         phone,
-        email: email || 'user@example.com',
+        email: email || 'sp01070608@gmail.com',
         address,
       });
 
@@ -147,7 +147,7 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
       <div className="space-y-3.5 flex-1">
         {/* Full Name */}
         <div className="space-y-1">
-          <label className="text-xs font-bold text-slate-700">中文姓名</label>
+          <label className="text-xs font-bold text-slate-700">真實姓名</label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
               <User className="h-4 w-4" />
@@ -188,8 +188,13 @@ export const BasicInfoScreen: React.FC<BasicInfoScreenProps> = ({
           {errors.idNumber && <p className="text-[11px] text-rose-500 pl-1">{errors.idNumber}</p>}
         </div>
 
-        {/* Birthday & Phone (2 cols) */}
-        <div className="grid grid-cols-2 gap-3">
+        {/* Birthday & Phone
+            2026-08-28：原本是 grid-cols-2 並排，真人手機測試回報兩欄
+            重疊——原生 type="date" 輸入框在窄螢幕上的瀏覽器內建日期
+            選擇器最小寬度常常比欄位本身寬，會溢出蓋到右邊的手機號碼
+            欄位。手機版螢幕本來就窄，改成單欄堆疊比較穩，不再靠 CSS
+            硬擠兩欄。 */}
+        <div className="grid grid-cols-1 gap-3">
           <div className="space-y-1">
             <label className="text-xs font-bold text-slate-700">出生年月日</label>
             <div className="relative">

@@ -80,6 +80,28 @@ def _empty_result(snr=0.0, roi_consistency=0.0):
     }
 
 
+def disabled_result():
+    """2026-08-29：Track2 rPPG 已停用，不再參與 /verify 的風險融合。
+
+    決策依據：對 20 筆真人樣本實測，SNR 從未達到 config.RPPG_SNR_MIN
+    （落在 -7.46 ~ 2.18dB 之間，平均 -2.96dB），roiConsistency 有 7 筆
+    直接是 0.0——用 draw_roi_overlay() 疊圖檢查後發現三個 ROI 本身框選
+    範圍太小、額頭 ROI 甚至部分蓋到眉毛，是系統性問題而非個別樣本異常
+    （診斷過程見對話紀錄）。同一時間查證主流商用活體驗證廠商
+    （iProov／FaceTec／Onfido）公開資料，均未見以 rPPG 作為正式產品
+    技術的證據，佐證一般消費級鏡頭下 rPPG 訊噪比不穩定並非本專案獨有
+    的工程問題。
+
+    這不是刪除功能，是保留分析程式碼本身（analyze_rppg() 與底下的
+    ROI／訊號處理管線完全沒有被改動），只是不再呼叫它、不再讓它的
+    分數進到融合權重裡。回傳值刻意跟 _empty_result() 同一種形狀，
+    讓資料庫欄位與前端顯示不需要跟著大改。
+    """
+    result = _empty_result()
+    result["confidenceScore"] = 0.0  # 不是「偵測到高風險」，是「這層沒有在跑」，避免誤讀
+    return result
+
+
 def _analyze_single_roi(roi_signal, fps):
     """對一個 ROI 跑完整訊號管線。
 
@@ -89,17 +111,18 @@ def _analyze_single_roi(roi_signal, fps):
     回傳:
         dict 或 None（訊號不可用時）
     """
-    # 只取綠通道。綠光被血紅素吸收最多，心跳訊號在三個通道裡最明顯；
-    # 紅光穿透深、受深層組織干擾，藍光訊噪比差。
-    green = roi_signal[:, 1]
-
-    if np.isnan(green).all():
+    # 2026-08-26：原本只取綠通道（血紅素吸收最多，訊號最明顯），但
+    # 單一通道對動作/光線雜訊很敏感，實測下來真人跟假影片的 SNR
+    # 幾乎沒有區分度。改用 POS 演算法，同時用三個通道並透過投影
+    # 公式抵銷掉光照/動作造成的共同雜訊，理論上更 robust。
+    if np.isnan(roi_signal).all():
         return None
 
-    green = su.interpolate_missing(green)
+    rgb = su.interpolate_missing(roi_signal)
+    pulse = su.pos_algorithm(rgb, fps)
 
     try:
-        filtered = su.bandpass_filter(su.detrend_signal(green), fps)
+        filtered = su.bandpass_filter(su.detrend_signal(pulse), fps)
     except ValueError:
         return None
 

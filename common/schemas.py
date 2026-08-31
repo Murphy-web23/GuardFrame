@@ -56,15 +56,24 @@ class TopSignal(CamelModel):
 
 
 class RecordingPhases(CamelModel):
-    """各階段的影格區間 [起, 訖]，全片索引。
+    """各階段的時間區間 [起, 訖)，相對錄影開始的毫秒數，訖不含在內。
 
     occlusion 是 action 內的子區間（= wave_hand 那一項的區間），
     不是獨立於動作挑戰之外的額外階段，見 §5.3 說明。
+
+    2026-08-27：原本這裡是「影格索引」（前端用假設的固定 30fps 換算
+    好才送過來）——真人測試（申請人 970）發現裝置實際錄影 fps 常常
+    達不到 30（該次只有 24.4fps），前端假設的 fps 跟影片實際 fps
+    對不上，換算出來的影格範圍會超出影片實際長度，Track 3/4 的分析
+    範圍因此系統性地算錯。改成前端只送「毫秒」，換算成影格索引這一步
+    挪到後端做（api/routes.py 的 `_ms_range_to_frame_range()`），用
+    `extract_frames()` 解碼影片後量到的真實 fps 換算，從根本上避免
+    這整類「假設 fps 跟真實 fps 對不上」的問題。
     """
 
-    action: tuple[int, int]
-    lighting: tuple[int, int]
-    occlusion: tuple[int, int]
+    action: tuple[float, float]
+    lighting: tuple[float, float]
+    occlusion: tuple[float, float]
 
 
 class RecordingInfo(CamelModel):
@@ -197,7 +206,10 @@ class DecisionResult(CamelModel):
 
 
 class VlmFrameObservation(CamelModel):
-    frame_index: int
+    # 2026-08-29：原本是 frame_index，但複核人員要的是「該去影片哪個
+    # 時間點看」，不是內部的影格編號——換算成秒數在這裡做一次，
+    # 前端跟複核人員都不用自己拿 frame_index 除以 fps。
+    timestamp_sec: float
     observation: str
 
 
@@ -216,6 +228,19 @@ class VlmSummary(CamelModel):
 
 class VerificationRecord(CamelModel):
     id: str
+    # 2026-08-30：id 是給人看的格式化字串（"VF-20260830-0472"），後台
+    # 「發送補件通知／通知前往實體分行／確認核准通過」三顆按鈕呼叫
+    # POST /admin/records/{record_id}/action 時，那支端點的路徑參數要的
+    # 是純數字的資料庫 id（見 api/routes.py resolve_admin_record()），
+    # 原本前端直接把 id 這個格式化字串傳過去，FastAPI 解析路徑參數失敗、
+    # 回傳的驗證錯誤又被前端直接塞進 String()，變成使用者看到的
+    # "[object Object]"——補這個獨立欄位，兩種用途不要共用同一個 id。
+    record_id: int
+    # 2026-08-30：後台複核案件要能對照到 data/verification_videos/
+    # {applicant_id}/{record_id}.webm 這個實際存檔路徑，才能讓審核人員
+    # 自己去找原始影片看——沒有另外做下載/串流端點（範圍留給之後），
+    # 先讓後台顯示這兩個數字，行員自己去檔案系統找就好。
+    applicant_id: int
     timestamp: str
     applicant_name: str
     applicant_id_masked: str
@@ -404,3 +429,20 @@ class AdminLoginResponse(CamelModel):
 
 class AdminRecordsResponse(CamelModel):
     records: list[VerificationRecord]
+
+
+class AdminRecordActionRequest(CamelModel):
+    """人工複核案件的行員動作。只有 verdict == "review" 的案件能執行。
+
+    approve：行員確認核准通過，改寫 verdict/verdictLabel 為最終結果，
+        寄送核准通知信。
+    request_docs／branch_visit：不改動判定結果（案件仍是 review，
+        還在等後續動作），只寄出對應內容的通知信。
+    """
+
+    action: Literal["approve", "request_docs", "branch_visit"]
+
+
+class AdminRecordActionResponse(CamelModel):
+    success: bool
+    email_sent: bool

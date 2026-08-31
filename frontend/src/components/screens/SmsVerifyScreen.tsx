@@ -40,9 +40,21 @@ export const SmsVerifyScreen: React.FC<SmsVerifyScreenProps> = ({
   };
 
   // Demo user quick select
+  // 2026-08-22：原本只填手機號碼欄位本身，沒有寫進共用的 formData，
+  // 導致後面「確認個人資料」步驟自己的示範資料選單如果選了不同一組，
+  // 姓名/身分證/生日等資料會跟這裡實際送出驗證的手機號碼對不上。這裡
+  // 直接把整組示範資料寫進 formData，讓後面步驟預設帶出同一組人，
+  // 不用重選（使用者仍然可以在後面步驟自己改）。
   const handleSelectDemoUser = (user: DemoUser) => {
     setPhoneInput(user.phone);
     setPhoneError('');
+    updateFormData({
+      fullName: user.fullName,
+      idNumber: user.idNumber,
+      birthday: user.birthday,
+      email: user.email,
+      address: user.address,
+    });
   };
 
   // Handle digit inputs
@@ -121,9 +133,14 @@ export const SmsVerifyScreen: React.FC<SmsVerifyScreenProps> = ({
         </p>
       </div>
 
-      {/* PHASE 1: INPUT PHONE NUMBER */}
+      {/* PHASE 1: INPUT PHONE NUMBER
+          2026-08-28：原本外層是 flex-1 justify-between，想把按鈕釘在
+          畫面最下方，但這一階段內容很短（只有一個輸入框），真人手機
+          測試回報「下面一整塊看起來是無效介面」——justify-between 在
+          內容短、容器又撐滿全螢幕高度時，會留下一大塊視覺上像是壞掉
+          的空白區域。改成讓按鈕自然接在內容後面，不強行釘底。 */}
       {phase === 'input_phone' && (
-        <div className="flex flex-col flex-1 justify-between space-y-6">
+        <div className="flex flex-col space-y-6">
           <div className="space-y-4">
             {/* Phone Input Box */}
             <div className="space-y-1.5">
@@ -177,7 +194,7 @@ export const SmsVerifyScreen: React.FC<SmsVerifyScreenProps> = ({
 
       {/* PHASE 2: 5-MIN COUNTDOWN & 6-DIGIT CODE VERIFICATION */}
       {phase === 'input_code' && (
-        <div className="flex flex-col flex-1 justify-between space-y-6">
+        <div className="flex flex-col space-y-6">
           <div className="space-y-4">
             {/* 5 Minutes Countdown Notice */}
             <div className="flex items-center justify-between p-3 rounded-2xl bg-sky-50/70 border border-sky-100 text-xs">

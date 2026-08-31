@@ -52,21 +52,128 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // 2026-08-25：原本這個 ref 指向掛在 DOM 上、用 CSS `hidden`
+  // （display:none）藏起來的 <canvas>。真人測試發現：畫面預覽明明看
+  // 得到證件、對齊指示燈也亮了，拍照送出去的卻是純黑畫面（存到
+  // data/_debug_id_card_failures/ 的診斷圖是純黑、而且兩次檔案大小
+  // 一模一樣——不是真的拍到暗場景，是根本沒畫到東西）。已知的 WebKit
+  // 怪癖：`display:none` 的 <canvas> 在部分 iOS Safari 版本上，畫進去
+  // 的內容有可能沒有真的被畫出來。下面的 scanCanvasRef（即時邊緣密度
+  // 偵測用，已經證實在真機上正常運作）完全不掛在 DOM 上（純
+  // document.createElement，不 append），改成同一種寫法：這個 ref 現在
+  // 是懶建立的離屏 canvas，不再對應任何 JSX 元素。
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // 2026-08-25：定期取樣畫面中央區域算邊緣密度用的暫存 canvas，跟上面
+  // 拍照用的 canvasRef 分開，避免互相干擾。
+  const scanCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // 2026-08-25：見下面掃描 useEffect 的說明——即時對齊偵測要抓「畫面上
+  // 真正顯示的四角引導框」所在的實際區域，不能用寫死的畫面中央固定
+  // 比例，這兩個 ref 用來量測引導框跟它的容器在螢幕上的實際位置。
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
+  const guideBoxRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-detect / align simulation timer when camera is active
+  // 2026-08-25：原本這裡是假的——不管畫面裡有沒有東西，固定等 1.2 秒就
+  // 顯示「已對齊」，跟後端真的偵測結果常常對不起來（畫面顯示偵測到，
+  // 拍下去卻可能顯示未偵測到）。改成真的定期（每 350ms）取樣畫面中央
+  // 區域，算邊緣密度：把區域縮小成 64×40 灰階小圖，算相鄰像素差異的
+  // 平均值當作「這裡有沒有明顯邊界」的粗略指標——證件邊緣、文字、圖案
+  // 會產生高對比邊緣，均勻的桌面/背景邊緣密度低。這不是跟後端一樣的
+  // Canny＋四邊形偵測，只是前端給使用者即時回饋用的粗略估計，真正的
+  // 判斷還是以拍照後送到後端的結果為準。
+  //
+  // 2026-08-25 修正：一開始這裡取樣區域是寫死「畫面中央 70% 寬、45%
+  // 高」，假設這個比例跟畫面上顯示的四角引導框差不多大——但引導框的
+  // CSS 是 `w-[72%] max-w-[280px] aspect-[1.58/1]`，桌面版視窗較寬時
+  // `max-w-[280px]` 這個上限會讓引導框實際比 70% 小很多（例如
+  // 1280px 寬的視訊畫面，280px 大概只佔 22%，不是 70%）。取樣區域比
+  // 引導框大這麼多，使用者把證件對準畫面上看到的框，取樣到的其實
+  // 大半是框外的背景，邊緣密度自然被稀釋、永遠亮不起「已對齊」的
+  // 綠燈——這就是真人測試回報「明明對準框線，拍照時卻偵測不到」的
+  // 根因。改成直接量測引導框（guideBoxRef）跟它的容器
+  // （videoContainerRef）在畫面上的實際像素位置，換算成 object-cover
+  // 縮放前、影片原始像素座標系裡的裁切區域，取樣範圍才會跟畫面上
+  // 使用者實際看到的框真正一致。
   useEffect(() => {
-    let timer: any;
-    if (isCameraOpen) {
+    if (!isCameraOpen) {
       setIsCardAligned(false);
-      // Simulate detection: after 1.2 seconds, the 4 corners align & turn green!
-      timer = setTimeout(() => {
-        setIsCardAligned(true);
-      }, 1200);
-    } else {
-      setIsCardAligned(false);
+      return;
     }
-    return () => clearTimeout(timer);
+    setIsCardAligned(false);
+
+    const SAMPLE_W = 64;
+    const SAMPLE_H = 40;
+    const EDGE_DENSITY_THRESHOLD = 18; // 灰階值 0-255 尺度下的平均邊緣強度
+
+    const interval = setInterval(() => {
+      const video = videoRef.current;
+      const container = videoContainerRef.current;
+      const guideBox = guideBoxRef.current;
+      if (!video || video.videoWidth === 0 || !container || !guideBox) return;
+
+      if (!scanCanvasRef.current) {
+        scanCanvasRef.current = document.createElement('canvas');
+      }
+      const canvas = scanCanvasRef.current;
+      canvas.width = SAMPLE_W;
+      canvas.height = SAMPLE_H;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+
+      // video 用 object-cover 撐滿 container：先算出縮放比例（取較大的
+      // 那一邊，讓短邊也能填滿），再算出因為裁切而在畫面外的偏移量。
+      const containerRect = container.getBoundingClientRect();
+      const guideRect = guideBox.getBoundingClientRect();
+      const scale = Math.max(containerRect.width / vw, containerRect.height / vh);
+      const displayedW = vw * scale;
+      const displayedH = vh * scale;
+      const offsetX = (displayedW - containerRect.width) / 2;
+      const offsetY = (displayedH - containerRect.height) / 2;
+
+      // 引導框相對 container 左上角的畫面座標，換算回影片原始像素座標。
+      const cropX = (guideRect.left - containerRect.left + offsetX) / scale;
+      const cropY = (guideRect.top - containerRect.top + offsetY) / scale;
+      const cropW = guideRect.width / scale;
+      const cropH = guideRect.height / scale;
+      ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, SAMPLE_W, SAMPLE_H);
+
+      let data: Uint8ClampedArray;
+      try {
+        data = ctx.getImageData(0, 0, SAMPLE_W, SAMPLE_H).data;
+      } catch (_) {
+        return; // 部分瀏覽器在畫面還沒 ready 時讀取會丟例外，忽略即可
+      }
+
+      const gray = new Float32Array(SAMPLE_W * SAMPLE_H);
+      for (let i = 0; i < SAMPLE_W * SAMPLE_H; i++) {
+        const r = data[i * 4];
+        const g = data[i * 4 + 1];
+        const b = data[i * 4 + 2];
+        gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+      }
+
+      let edgeSum = 0;
+      let count = 0;
+      for (let y = 0; y < SAMPLE_H; y++) {
+        for (let x = 0; x < SAMPLE_W - 1; x++) {
+          edgeSum += Math.abs(gray[y * SAMPLE_W + x] - gray[y * SAMPLE_W + x + 1]);
+          count++;
+        }
+      }
+      for (let y = 0; y < SAMPLE_H - 1; y++) {
+        for (let x = 0; x < SAMPLE_W; x++) {
+          edgeSum += Math.abs(gray[y * SAMPLE_W + x] - gray[(y + 1) * SAMPLE_W + x]);
+          count++;
+        }
+      }
+
+      const edgeDensity = count > 0 ? edgeSum / count : 0;
+      setIsCardAligned(edgeDensity >= EDGE_DENSITY_THRESHOLD);
+    }, 350);
+
+    return () => clearInterval(interval);
   }, [isCameraOpen, cameraSide]);
 
   // Start Camera
@@ -77,7 +184,18 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          // 2026-08-24：原本要求橫的 1280×720，但鏡頭框在手機上是直的
+          // 窄長容器，object-cover 會裁掉左右一大塊「畫面上看不到、但
+          // 後端還是收得到」的範圍，導致畫面上看起來對準了，證件在
+          // 後端拿到的原始畫面裡佔比卻很小——跟人臉驗證那邊修過的
+          // 同一類問題（見 FaceVerificationEngine.tsx 的說明）。改成
+          // 接近容器直式比例的解析度。
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 720 },
+            height: { ideal: 1280 },
+            aspectRatio: { ideal: 0.6 },
+          },
         });
         streamRef.current = stream;
         if (videoRef.current) {
@@ -101,14 +219,17 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
   // 把目前的相機畫面截成一張 Blob，共用給拍照跟上傳兩條路徑用
   const captureVideoFrameAsBlob = (): Promise<Blob | null> => {
     const video = videoRef.current;
+    if (!video || video.videoWidth === 0) return Promise.resolve(null);
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement('canvas');
+    }
     const canvas = canvasRef.current;
-    if (!video || !canvas || video.videoWidth === 0) return Promise.resolve(null);
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return Promise.resolve(null);
-    // 相機預覽用 -scale-x-100 鏡像顯示（比較符合直覺），但送去矯正的
-    // 畫面要用未鏡像的原始畫面，跟真實證件文字方向一致。
+    // 2026-08-24：預覽畫面已經不鏡像了（見上面 <video> 的說明），這裡
+    // 直接照畫面截圖即可，跟送去矯正的原始方向一致。
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.92));
   };
@@ -262,7 +383,7 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
       {rectifyStatus === 'capturing' && (
         <div className="mb-3 p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs font-semibold text-sky-700 flex items-center gap-2">
           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-          <span>正在偵測證件邊界…</span>
+          <span>正在偵測證件…</span>
         </div>
       )}
       {rectifyStatus === 'failed' && (
@@ -306,7 +427,7 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
                     請將【身分證正面】置於四角標記內
                   </p>
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    系統將自動進行姓名與身分證字號 OCR 辨識
+                    系統將自動進行姓名與身分證字號資料辨識
                   </p>
                 </div>
 
@@ -460,9 +581,6 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
           onChange={handleFileUpload}
           className="hidden"
         />
-        {/* 擷取相機畫格用，不顯示在畫面上 */}
-        <canvas ref={canvasRef} className="hidden" />
-
         {/* Primary CTA: 下一步 (Enabled only when BOTH front & back are captured) */}
         <div className="pt-2">
           {!isBothCompleted && (
@@ -517,20 +635,24 @@ export const IdUploadScreen: React.FC<IdUploadScreenProps> = ({
             </div>
 
             {/* Video Feed & 4-Corner Target Alignment Box */}
-            <div className="relative flex-1 flex items-center justify-center overflow-hidden bg-slate-950">
+            <div ref={videoContainerRef} className="relative flex-1 flex items-center justify-center overflow-hidden bg-slate-950">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
-                className="absolute inset-0 w-full h-full object-cover -scale-x-100"
+                // 2026-08-24：這裡用的是 facingMode: 'environment'（後鏡頭）
+                // 拍證件，不是自拍，不該鏡像——鏡像只會讓證件上的文字看
+                // 起來是反的。鏡像效果只適合前鏡頭自拍情境（見人臉驗證
+                // 那邊 FaceVerificationEngine.tsx 才需要 -scale-x-100）。
+                className="absolute inset-0 w-full h-full object-cover"
               />
 
               {/* Dimmed backdrop mask outside the ID frame */}
               <div className="absolute inset-0 bg-slate-950/40 pointer-events-none" />
 
               {/* 4-CORNER TARGET ALIGNMENT FRAME */}
-              <div className="relative w-[72%] max-w-[280px] aspect-[1.58/1] flex items-center justify-center pointer-events-none">
+              <div ref={guideBoxRef} className="relative w-[72%] max-w-[280px] aspect-[1.58/1] flex items-center justify-center pointer-events-none">
                 {/* Visual cutout clear box */}
                 <div className={`absolute inset-0 rounded-xl transition-all duration-500 ${
                   isCardAligned

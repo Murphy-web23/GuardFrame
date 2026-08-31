@@ -14,6 +14,10 @@ import config
 # 均勻抽樣取中位數比較能代表整段影片的品質。
 _SAMPLE_COUNT = 10
 
+# InsightFace 比純 OpenCV 的模糊度/亮度計算慢很多，CPU 上抽太多格會
+# 明顯拖慢整體處理時間，所以臉部偵測抽樣數比其他指標少。
+_FACE_SAMPLE_COUNT = 5
+
 _face_app = None
 _face_app_failed = False
 
@@ -129,9 +133,16 @@ def check_image_quality(frames: list) -> dict:
     contrast = float(np.median(contrast_values))
     overexposed_ratio = float(np.median(overexposed_ratios))
 
-    # 臉部偵測只在中間那格跑一次，CPU 上每格都跑太慢，
-    # 而使用者的位置在整段錄影中不會差太多。
-    face_ratio = _largest_face_ratio(np.asarray(frames[len(frames) // 2]))
+    # 2026-08-21：原本只在正中間那一格跑一次——真人測試發現，如果
+    # 正中間剛好卡在轉頭到側臉、或眨眼那一瞬間，SCRFD 抓不到正臉，
+    # faceRatio 會直接回報 0%，即使使用者整段錄影都好好對著鏡頭。
+    # 改成跟其他指標一樣多抽幾格取中位數，避免單一格不巧的畫面拖垮
+    # 整個判定；抽樣數比其他指標少（見上面 _FACE_SAMPLE_COUNT 說明）。
+    face_ratios = [
+        _largest_face_ratio(np.asarray(frames[i]))
+        for i in _sample_indices(len(frames), _FACE_SAMPLE_COUNT)
+    ]
+    face_ratio = float(np.median(face_ratios))
 
     reasons = []
     if blur_score < config.QUALITY_BLUR_MIN:

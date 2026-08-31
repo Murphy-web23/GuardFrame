@@ -30,11 +30,13 @@ export const ACTION_DURATIONS_SEC: Record<'blink' | 'turn_left' | 'turn_right' |
 };
 
 // 錄影請求的目標 fps。getUserMedia 的 frameRate 是「盡量」不是保證，
-// 這裡假設瀏覽器大致照這個速率編碼，跟 CONVENTIONS §5.3
-// 「記下 performance.now()，除以 fps 換算成影格索引」是同一套做法——
-// 目前後端沒有反過來拿真實影片的 fps 校正這裡宣告的值，兩邊對不起來
-// 時，切出來的 phases 影格範圍會不準，這是已知風險，見
-// PHASE1_NOTES 的說明。
+// 裝置實際錄到的 fps 常常達不到這個值（真人測試量過 24.4fps 的案例）。
+// 2026-08-27 之前，phases 影格範圍是前端自己拿這個值換算好才送出去，
+// 跟裝置實際 fps 對不上時範圍會算錯——現在 phases 改成送毫秒，換算
+// 交給後端用解碼後量到的真實 fps 做（見 common/schemas.py
+// RecordingPhases 的說明），不再依賴這個值算得準不準。這裡繼續保留
+// `RECORDING_FPS` 純粹是 getUserMedia 請求鏡頭時的目標值，以及
+// `totalFrames` 這個純資訊性欄位（後端不會用它）的換算依據。
 export const RECORDING_FPS = 30;
 
 /** 隨機產生一份 Track 3 用的燈光序列，段數/時長/顏色分佈跟後端
@@ -66,16 +68,3 @@ export function msToFrame(ms: number, fps: number = RECORDING_FPS): number {
   return Math.round((ms / 1000) * fps);
 }
 
-/** 把 [startMs, endMs) 這種「結束時刻不含在內」的區間，換算成後端
- * `_slice_phase()` 期待的 [起, 訖] 影格索引（訖含在內，見 CONVENTIONS
- * §5.1 範例：lighting=[600,692] 對應 frames[600:693]）。
- */
-export function msRangeToFrameRange(
-  startMs: number,
-  endMs: number,
-  fps: number = RECORDING_FPS
-): [number, number] {
-  const start = msToFrame(startMs, fps);
-  const end = Math.max(start, msToFrame(endMs, fps) - 1);
-  return [start, end];
-}

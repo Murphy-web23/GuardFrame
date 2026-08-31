@@ -1,4 +1,9 @@
-"""共用｜五層分數融合與決策邏輯。
+"""共用｜四層分數融合與決策邏輯（原五層，2026-08-29 起 Track2 rPPG 停用）。
+
+Track2（rPPG）已不參與這裡的風險融合，理由與依據見
+track2_rppg/analyzer.py::disabled_result() 的說明。程式碼本身沒有刪除，
+`/verify` 仍會呼叫 disabled_result() 把固定形狀的結果存進資料庫、回傳給
+前端（維持既有欄位相容），只是這裡的加權融合不再把它算進去。
 
 不在 CONVENTIONS §4 的固定介面契約清單裡（那份只列 A/B 分工的八個核心
 函式），但 SAD 模組圖已經把 common/fusion.py 列為共用模組，依 SRS
@@ -47,7 +52,6 @@ import config
 WEIGHTS = {
     "baseline": config.WEIGHT_BASELINE,
     "synthetic": config.WEIGHT_SYNTHETIC,
-    "rppg": config.WEIGHT_RPPG,
     "photometric": config.WEIGHT_PHOTOMETRIC,
     "occlusion": config.WEIGHT_OCCLUSION,
 }
@@ -62,19 +66,17 @@ VERDICT_LABELS = {
 _FAILURE_REASONS = {
     "baseline": "動作挑戰未完成，可能非真人即時操作",
     "synthetic": "偵測到疑似 AI 生成的臉部特徵",
-    "rppg": "未偵測到生理訊號（心跳），影像可能為完全合成",
     "photometric": "未偵測到照明響應，影像可能未經實體鏡頭擷取",
     "occlusion": "遮擋期間身分特徵不連續，疑似即時換臉攻擊",
 }
 
-_LAYER_ORDER = ("baseline", "synthetic", "rppg", "photometric", "occlusion")
+_LAYER_ORDER = ("baseline", "synthetic", "photometric", "occlusion")
 
 
-def _as_results(baseline, synthetic, rppg, photometric, occlusion):
+def _as_results(baseline, synthetic, photometric, occlusion):
     return {
         "baseline": baseline,
         "synthetic": synthetic,
-        "rppg": rppg,
         "photometric": photometric,
         "occlusion": occlusion,
     }
@@ -109,10 +111,10 @@ def _layer_risk(name, result):
     return max(0.0, min(1.0, score)) * 100.0
 
 
-def compute_risk_score(baseline, synthetic, rppg, photometric, occlusion):
-    """五層加權融合，回傳 0-100 的整數風險分數（符合 SDS risk_score
+def compute_risk_score(baseline, synthetic, photometric, occlusion):
+    """四層加權融合，回傳 0-100 的整數風險分數（符合 SDS risk_score
     的 INTEGER 型別）。"""
-    results = _as_results(baseline, synthetic, rppg, photometric, occlusion)
+    results = _as_results(baseline, synthetic, photometric, occlusion)
     weighted_sum = sum(WEIGHTS[name] * _layer_risk(name, results[name]) for name in _LAYER_ORDER)
     return int(round(max(0.0, min(100.0, weighted_sum))))
 
@@ -126,12 +128,24 @@ def compute_verdict(risk_score):
     return "reject"
 
 
-def build_reasons(baseline, synthetic, rppg, photometric, occlusion):
+def build_reasons(baseline, synthetic, photometric, occlusion):
     """依各層是否通過，依固定順序組出判定理由列表。全部通過時回傳空列表。"""
-    results = _as_results(baseline, synthetic, rppg, photometric, occlusion)
+    results = _as_results(baseline, synthetic, photometric, occlusion)
     return [
         _FAILURE_REASONS[name] for name in _LAYER_ORDER if not _layer_passed(name, results[name])
     ]
+
+
+def failed_layers(baseline, synthetic, photometric, occlusion) -> list[str]:
+    """回傳沒通過的層名稱（"baseline"/"synthetic"/"photometric"/"occlusion"）。
+
+    跟 build_reasons() 是同一份判定，只是回傳給人看的理由文字換成層的
+    識別字串——2026-08-29 新增，給 api/routes.py 決定「該把哪些層的
+    畫面送去給 VLM 看」用（原本寫死只送 Track4 的異常影格，但造成
+    review 判定的不一定是 Track4，也可能是 Track1/3）。
+    """
+    results = _as_results(baseline, synthetic, photometric, occlusion)
+    return [name for name in _LAYER_ORDER if not _layer_passed(name, results[name])]
 
 
 def is_baseline_missed(baseline, verdict):
@@ -142,13 +156,12 @@ def is_baseline_missed(baseline, verdict):
     return _layer_passed("baseline", baseline) and verdict == "reject"
 
 
-def fuse_decision(baseline, synthetic, rppg, photometric, occlusion) -> dict:
-    """五層融合的主要入口，組出完整的 decision dict（§5.1 格式）。
+def fuse_decision(baseline, synthetic, photometric, occlusion) -> dict:
+    """四層融合的主要入口，組出完整的 decision dict（§5.1 格式）。
 
     參數:
         baseline: analyze_baseline() 的回傳值
         synthetic: detect_synthetic() 的回傳值
-        rppg: analyze_rppg() 的回傳值
         photometric: analyze_photometric() 的回傳值
         occlusion: analyze_occlusion() 的回傳值
 
@@ -160,9 +173,9 @@ def fuse_decision(baseline, synthetic, rppg, photometric, occlusion) -> dict:
             "reasons": list[str]
         }
     """
-    risk_score = compute_risk_score(baseline, synthetic, rppg, photometric, occlusion)
+    risk_score = compute_risk_score(baseline, synthetic, photometric, occlusion)
     verdict = compute_verdict(risk_score)
-    reasons = build_reasons(baseline, synthetic, rppg, photometric, occlusion)
+    reasons = build_reasons(baseline, synthetic, photometric, occlusion)
 
     return {
         "riskScore": risk_score,

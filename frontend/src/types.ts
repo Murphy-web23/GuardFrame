@@ -57,6 +57,14 @@ export interface FormData {
   faceConfidence: number;
   photometricPassed?: boolean;
   photometricScore?: number;
+  // 2026-08-22：verdict === 'review' 現在也能繼續送出申請（不是直接
+  // 擋下來當失敗），案件標記為待人工複核。這個欄位讓後面步驟（例如
+  // CompletedScreen）知道要顯示「審核中」還是一般的完成訊息。
+  // 2026-08-25：/verify 改成非同步後，錄影上傳完當下還不知道真正的
+  // verdict（後端還在背景跑分析），先標記 'pending'；真正的值要等
+  // TermsSubmitScreen 送出開戶設定前，向 GET /verify-result 輪詢到
+  // 結果後才更新（見 waitForVerifyResult()）。
+  verificationVerdict?: 'pending' | 'pass' | 'review' | 'reject';
   
   // Step 5: Feature Selection, Terms & Submission
   cardStyle: 'style_a' | 'style_b';
@@ -117,15 +125,40 @@ export type HandlingStatus =
 
 export interface VerificationRecord {
   id: string;
+  // 2026-08-30：純數字的資料庫 id，給「發送補件通知／通知前往實體分行／
+  // 確認核准通過」這三個動作打後端用——id 是格式化過的顯示字串，不能
+  // 拿去當路徑參數，見 api/client.ts BackendVerificationRecord 的說明。
+  // 選填理由跟 riskScore 一樣：adminMockData.ts 的假資料沒有對應的
+  // 後端數字 id 可以填。
+  recordId?: number;
+  // 2026-08-30：跟 recordId 搭配，用來對照 data/verification_videos/
+  // {applicantId}/{recordId}.webm 這個實際存檔路徑，讓後台複核人員
+  // 自己去檔案系統找原始影片看，見 VerificationDetailModal.tsx。
+  applicantId?: number;
   applicantName: string;
   idNumberMasked: string;
   timestamp: string;
   verificationStatus: VerificationStatus;
   riskLevel: RiskLevel;
+  // 2026-08-25：後端 decision.riskScore（0-100，數字越低越可信）本來
+  // 就有算出來，但 mapBackendRecord() 只換算成 riskLevel（低/中/高）
+  // 三段式標籤就丟掉了，後台看不到實際分數。補上這個欄位，選填是因為
+  // adminMockData.ts 那些純展示用的假資料沒有對應的後端分數可以填。
+  riskScore?: number;
   method: string;
   handlingStatus: HandlingStatus;
   durationSec: number;
   notes?: string;
+  // 2026-08-29：VLM 視覺複核摘要（FR-37），只有人工複核案件才會有值，
+  // 見 VerificationDetailModal.tsx「AI 視覺複核摘要」區塊。跟上面
+  // notes（系統判定理由，來自 decision.reasons）是不同來源，不要混用。
+  vlmSummary?: {
+    available: boolean;
+    frameObservations: { timestampSec: number; observation: string }[];
+    summary: string;
+    model: string;
+    latencyMs: number;
+  } | null;
 }
 
 export interface DashboardStats {

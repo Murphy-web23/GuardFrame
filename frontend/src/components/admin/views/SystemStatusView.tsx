@@ -30,7 +30,7 @@ export const SystemStatusView: React.FC<SystemStatusViewProps> = ({
             系統服務與演算法引擎運行狀態
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            監控 GuardFrame 人臉活體偵測、證件 OCR 辨識與風控分析模型之可用性與延遲
+            監控 GuardFrame 人臉活體偵測、證件資料辨識與風控分析模型之可用性與延遲
           </p>
         </div>
 

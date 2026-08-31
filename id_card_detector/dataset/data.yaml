@@ -1,0 +1,16 @@
+# Ultralytics YOLO-pose 訓練設定檔
+# 用法：yolo pose train data=id_card_detector/dataset/data.yaml model=yolo11n-pose.pt epochs=100 imgsz=640
+#
+# 見同目錄 ../README.md 的標註格式說明。
+
+path: .          # 相對於這個 yaml 檔案自己所在的目錄
+train: images/train
+val: images/val
+
+# 4 個 keypoint，每個 3 個值 (x, y, visibility)
+# 順序固定：[左上, 右上, 右下, 左下]
+kpt_shape: [4, 3]
+
+# 只有一個類別
+names:
+  0: id_card

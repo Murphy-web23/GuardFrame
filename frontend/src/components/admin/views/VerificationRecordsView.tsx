@@ -32,7 +32,7 @@ export const VerificationRecordsView: React.FC<VerificationRecordsViewProps> = (
             身分驗證紀錄總庫 (Verification Records)
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            提供銀行風控專員檢索歷史開戶核驗、OCR 證件辨識與人臉特徵比對案件
+            提供銀行風控專員檢索歷史開戶核驗、證件資料辨識與人臉特徵比對案件
           </p>
         </div>
 

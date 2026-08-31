@@ -38,7 +38,7 @@ export const DesktopBasicInfo: React.FC<DesktopBasicInfoProps> = ({
   const [idNumber, setIdNumber] = useState<string>(formData.idNumber || defaultMockOcrData.idNumber);
   const [birthday, setBirthday] = useState<string>(formData.birthday || defaultMockOcrData.birthday);
   const [phone, setPhone] = useState<string>(formData.phone || defaultMockOcrData.phone);
-  const [email, setEmail] = useState<string>(formData.email || 'user@example.com');
+  const [email, setEmail] = useState<string>(formData.email || 'sp01070608@gmail.com');
   const [address, setAddress] = useState<string>(formData.address || defaultMockOcrData.address);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -87,7 +87,7 @@ export const DesktopBasicInfo: React.FC<DesktopBasicInfoProps> = ({
         idNumber,
         birthDate: birthday,
         phone,
-        email: email || 'user@example.com',
+        email: email || 'sp01070608@gmail.com',
         address,
       });
 

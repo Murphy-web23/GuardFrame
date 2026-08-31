@@ -127,7 +127,7 @@ def analyze_occlusion(frames: list, fps: float) -> dict:
         ht.detect_wave_cycles(hand_data, face_region) if face_region is not None else []
     )
 
-    transitions = idt.valid_transition_similarities(face_data)
+    transitions = idt.valid_transition_similarities(face_data, occlusion_segments=segments)
     identity_stability = idt.identity_stability(transitions)
     max_drop = idt.max_identity_drop(transitions)
     anomaly_frames = idt.find_anomaly_frames(transitions, config.OCC_MAX_DROP_THRESHOLD)

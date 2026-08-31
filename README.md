@@ -1,14 +1,44 @@
 # GuardFrame
 
-eKYC 線上開戶的即時生成式換臉與注入式攻擊偵測系統。使用者錄一段臉部影片，期間依序完成隨機動作挑戰、
-照明挑戰、遮擋挑戰，系統用五條獨立的證據線判斷是否為真人現場拍攝。
+**GuardFrame 是一套防禦「即時換臉攻擊」的身分驗證引擎，設計給銀行數位開戶流程使用。**
 
-> 技術規則書（介面契約、資料結構、命名規則）與執行計畫是團隊內部文件，
-> 不在這個 repo 裡，請向團隊成員索取。
+## 這個專案在解決什麼問題
 
-## 環境
+現在許多銀行的數位開戶，會要求使用者打開鏡頭、跟著指示眨眼、轉頭，用這個方式證明「鏡頭前的人是本人」。這個機制背後的假設很簡單：只有本人才能即時做出正確反應。
 
-Python **3.12**（兩人必須完全一致）。
+但「即時換臉」技術打破了這個假設。攻擊者只要拿到一份被害人的身分證件照片（買來的、偷來的，或社交工程騙來的），自己坐在鏡頭前操作換臉軟體，把自己的臉即時置換成被害人的臉——系統要求的眨眼、轉頭這些動作，攻擊者本人都能正確完成，因為驅動畫面的確實是一個真實存在、正在鏡頭前的人，只是臉被換掉了。這種攻擊已經不是理論：2026 年 3 月，荷蘭 ABN AMRO 銀行的案件被揭露，攻擊者用竊取的身分證件加上即時換臉技術，透過該行的手機開戶流程開出 46 個詐欺帳戶。
+
+## GuardFrame 做了什麼
+
+我們的做法不是單一「這張臉看起來像不像真人」的判斷，而是同時用**幾種原理各自獨立的檢查**——包括畫面本身有沒有 AI 生成痕跡、臉部反光跟不跟得上螢幕光線變化、以及使用者揮手遮臉時身分特徵有沒有斷掉。攻擊者要通過驗證，必須同時騙過好幾種完全不同性質的偵測方式，而不是只騙過一個。
+
+系統最後產出的不是一個「通過／拒絕」的黑箱結果，而是完整的判斷依據（各項分數、曲線圖），交給銀行後台的審核人員查閱，最終決策權仍在銀行手上——GuardFrame 的角色是驗證引擎，不是取代銀行業務判斷的系統。
+
+## 四道防線（技術細節）
+
+| 層 | 原理 | 主要工具 |
+|---|---|---|
+| 對照組（動作挑戰） | 隨機順序的眨眼／轉頭指令，伺服器端出題防止預錄影片 | MediaPipe Face Landmarker |
+| Track 1（合成偵測） | 分析畫面本身有無 AI 生成痕跡 | 視覺基礎模型 + 分類器 |
+| Track 3（照明響應） | 螢幕隨機閃色，比對臉部反光與立體幾何是否符合真實物理反應 | MediaPipe + SciPy（互相關分析） |
+| Track 4（遮擋一致性，核心防線） | 使用者揮手遮臉，換臉演算法在遮擋瞬間最容易露出破綻，比對遮擋前後的身分特徵連續性 | MediaPipe Hands + InsightFace（512 維人臉嵌入） |
+
+**Track 2（生理訊號／rPPG 心跳偵測）已停用，不參與目前的風險判定。** 團隊實測 20 筆真人樣本後發現一般消費級鏡頭的訊噪比無法穩定達標，且主流商用活體驗證廠商亦未見以此作為正式產品技術，判斷為現階段消費級硬體的限制而非工程缺陷。完整訊號處理管線（MediaPipe 抓 ROI、POS 演算法、SciPy 濾波與頻譜分析）程式碼保留在 `track2_rppg/`，僅不再計入風險融合，見 `track2_rppg/analyzer.py::disabled_result()`。
+
+四層之後，人工複核案件會另外呼叫本地部署的多模態模型（Ollama + Qwen2.5-VL）針對可疑影格生成文字摘要，依觸發複核的層（合成/光線/遮擋）動態調整提問內容，協助審核人員快速定位問題，但不參與最終判定。
+
+## 技術棧
+
+- **後端**：FastAPI、PostgreSQL、SQLAlchemy，非同步背景任務處理四層分析
+- **電腦視覺**：MediaPipe（臉部/手部關鍵點）、InsightFace（人臉嵌入）、YOLO11n-pose（證件角點偵測，古典 CV 作自動 fallback）、OpenCV
+- **訊號處理**：SciPy（帶通濾波、頻譜分析、互相關）
+- **多模態 AI**：Ollama 本地部署 Qwen2.5-VL，用於人工複核輔助摘要
+- **前端**：React 19 + Vite + TypeScript + Tailwind CSS
+- **通知**：Resend API（自動判定與人工複核結果通知信）
+
+## 環境設定
+
+### 後端（Python 3.12）
 
 ```bash
 python -m venv venv
@@ -19,53 +49,60 @@ python test_env.py
 
 `test_env.py` 會逐一 import 所有套件並實際跑一次運算，全部通過才會印出「全部 OK」。
 
+在專案根目錄建立 `.env`（不會進 git）：
+
+```
+DATABASE_URL=postgresql://<user>:<password>@localhost:5432/<db>
+RESEND_API_KEY=<Resend 的 API Key，選填，沒設定時通知信功能會自動跳過不寄信>
+FRONTEND_BASE_URL=http://localhost:3000
+```
+
+建立後台行員帳號：
+
+```bash
+venv\Scripts\python.exe scripts\init_admin.py
+```
+
+需要另外取得的模型檔（皆不進 git，見 `.gitignore`）：
+
+| 模型 | 大小 | 用途 | 取得方式 |
+|---|---|---|---|
+| `models/face_landmarker.task` | 3.6 MB | MediaPipe 臉部關鍵點 | 網址見 `config.MEDIAPIPE_FACE_MODEL_URL` |
+| `models/hand_landmarker.task` | 7.5 MB | MediaPipe 手部關鍵點（Track 4） | 網址見 `config.MEDIAPIPE_HAND_MODEL_URL` |
+| InsightFace `buffalo_l` | ~300 MB | 人臉偵測與身分嵌入 | 首次呼叫時自動下載至 `~/.insightface` |
+| Ollama `qwen2.5vl:3b` | — | 人工複核 VLM 摘要 | 需先裝 [Ollama](https://ollama.com)，執行 `ollama pull qwen2.5vl:3b` |
+
+啟動後端：
+
+```bash
+venv\Scripts\python.exe -m uvicorn api.main:app --port 8000 --host 0.0.0.0
+```
+
+### 前端
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+預設連線到 `http://localhost:8000`，可用 `VITE_API_BASE_URL` 環境變數覆蓋。
+
 ## 跑測試
 
 ```bash
 pytest tests/ -q
 ```
 
-**不需要攝影機、真實影片或真人照片。** 訊號處理用合成訊號驗證，
-影像品質用程式生成的測試圖驗證，Track 2 的端到端測試則是畫一張臉、
-讓皮膚區域隨心跳週期變色，合成出一段「有心跳」的影片來跑。
+**不需要攝影機、真實影片或真人照片。** 訊號處理用合成訊號驗證，影像品質用程式生成的測試圖驗證。端到端測試需要 `models/face_landmarker.task`、`models/hand_landmarker.task`，缺檔時會自動 skip。
 
-端到端測試需要 `models/face_landmarker.task`、`models/hand_landmarker.task`，缺檔時會自動 skip。
+## API 概覽
 
-## 目前進度
+申請人端流程用 `X-Session-Id` header 驗證身分，後台端用 `Authorization: Bearer <token>`，兩套機制不互通。
 
-| 模組 | 狀態 |
+| 端點 | 用途 |
 |---|---|
-| `track2_rppg/` | 完成。合成影片端到端驗證：72 bpm 目標，估算誤差 0.02 bpm |
-| `track3_photometric/` | 完成（後端）。合成多區塊影格端到端驗證。`PHOTO_GEOMETRY_CV_REFERENCE` 待真實資料校準；真實影片驗證需前端顏色播放器，排階段 3 |
-| `track4_occlusion/` | 完成（後端）。合成「兩次揮手遮擋」情境端到端驗證（含身分互換、臉透出來、沒揮手三種失敗情境）。真人自測發現 `maxIdentityDrop` 對手部部分遮擋過度敏感，待更多樣本後校準，見 PHASE1_NOTES §2.6 |
-| `image_utils/quality.py` | 完成，`faceRatio` 需 InsightFace 模型 |
-| `image_utils/id_card.py` | 完成，合成矩形卡片驗證，真實證件照片待驗證 |
-| `baseline_challenge/` | 完成。左右轉判定用自創的幾何比例，方向已用真實自錄影片驗證並修正（2026-08-18）。伺服器端隨機挑戰順序機制（`GET .../challenge-order`）2026-08-20 補上，`/verify` 會交叉驗證上傳順序，見 `PHASE1_NOTES.md` §九 |
-| `common/fusion.py` | 完成。五層加權融合＋三段式決策，2026-08-19 改用連續信心分數（見下方說明），不再是二值化風險 |
-| `common/risk.py` | 完成。sigmoid 平滑「數值 vs 門檻」判定的共用工具，供各 track 算 `confidenceScore` |
-| `common/schemas.py` | 完成。Pydantic 契約模型（snake_case 欄位＋camelCase 別名） |
-| `common/face_utils.py` | 完成 `extract_frames()`；`extract_face()`/CLIP 對齊留給 A |
-| `api/` | 全部 9 支契約端點完成：`POST /api/applicants`、`/verify`、`id-card/rectify`、`sms/send`、`sms/verify`、`account-setup`、`reset`、`admin/login`、`admin/records`、`admin/records/{id}`（含真的接 PostgreSQL）。申請人端用 `X-Session-Id` header，後台端用 `Authorization: Bearer <token>`，兩套機制不要搞混，細節見 `PHASE1_NOTES.md` §七。CORS 已開放（開發階段 `allow_origins=["*"]`，正式環境要改成前端實際網域）。23 秒驗證影片已做**象徵性本機保存**（只有走完整條管線的紀錄才留，不是合規等級的儲存架構），見 `PHASE1_NOTES.md` §八 |
-| `frontend/` | Vite + React 19，涵蓋申請人六步驟流程與後台儀表板，已串接真實後端 API（後台登入/查詢、簡訊驗證、基本資料、帳戶設定、證件拍照矯正、人臉驗證錄影上傳）。**人臉驗證錄影功能無法在開發環境用瀏覽器自動化測試相機**，邏輯正確性靠直接呼叫後端 API 驗證，實際錄影行為（尤其 fps 是否跟宣告值一致）待真人測試確認，見 `PHASE1_NOTES.md` 階段三紀錄 §四 |
-| `track1_synthetic/`、`vlm_summary/` | A 負責，目前放了 B 的佔位版本讓系統能先跑通 |
-
-### 2026-08-19：五層改用連續信心分數
-
-對照組、Track 2/3/4 原本用二值化風險（沒過門檻=100分風險、過了=0分），
-現在跟 Track 1 一樣統一輸出 `confidenceScore`（0.0-1.0，數值越高代表
-越可疑），能反映「證據有多強」而不只是「有沒有超過門檻」。詳細設計、
-新增常數、優缺點見 `PHASE1_NOTES.md` §四之二。
-
-## 需要另外取得的模型檔
-
-三者都不進 git（見 `.gitignore`）：
-
-| 模型 | 大小 | 用途 | 取得方式 |
-|---|---|---|---|
-| `models/face_landmarker.task` | 3.6 MB | MediaPipe 臉部關鍵點 | 已下載。網址見 `config.MEDIAPIPE_FACE_MODEL_URL` |
-| `models/hand_landmarker.task` | 7.5 MB | MediaPipe 手部關鍵點（Track 4） | 已下載。網址見 `config.MEDIAPIPE_HAND_MODEL_URL` |
-| InsightFace `buffalo_l` | ~300 MB | 人臉偵測與身分嵌入 | 首次呼叫時自動下載至 `~/.insightface` |
-
-> MediaPipe 1.0.0 移除了舊的 `mp.solutions` API，改用 Tasks API，
-> 而 Tasks API 必須自備 `.task` 模型檔。PLAN.md 裡的 `mp.solutions.face_mesh`
-> 寫法在這個版本已經不能用。
+| `POST /api/applicants` ~ `/account-setup` | 申請人六步驟開戶流程（基本資料、簡訊驗證、證件矯正、人臉驗證、帳戶設定） |
+| `POST /api/admin/login` | 後台行員登入 |
+| `GET /api/admin/records`、`/{id}` | 後台驗證紀錄列表與單筆詳情 |
+| `POST /api/admin/records/{id}/action` | 人工複核案件的行員操作（發送補件通知／通知前往實體分行／確認核准通過），會透過 Resend 寄出對應通知信 |

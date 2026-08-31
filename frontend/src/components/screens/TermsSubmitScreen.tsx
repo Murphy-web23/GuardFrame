@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { FormData } from '../../types';
-import { setupAccount, ApiError } from '../../api/client';
+import { setupAccount, waitForVerifyResult } from '../../api/client';
 import { 
   ShieldCheck, 
   FileText, 
   ExternalLink, 
   X, 
   ArrowRight, 
-  Loader2,
   CheckCircle2,
   AlertCircle,
   Lock,
@@ -44,8 +43,6 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
   // Modal State for Terms viewer
   const [activeModal, setActiveModal] = useState<'terms' | 'privacy' | 'electronic' | null>(null);
 
-  // Submission Loading State
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [showValidationWarning, setShowValidationWarning] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string>('');
 
@@ -59,7 +56,7 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
     if (nextVal) setShowValidationWarning(false);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!isAllTermsAgreed) {
       setShowValidationWarning(true);
       return;
@@ -76,40 +73,54 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
     setShowValidationWarning(false);
     setPinError('');
     setSubmitError('');
-    setIsSubmitting(true);
 
-    try {
-      // 真的呼叫 POST /api/applicants/{id}/account-setup（§5.8）。
-      // cardStyle -> accountType、notificationMethod -> notificationPreference
-      // 是這次整合時決定的映射，後端跟前端在這兩個欄位上本來就沒有
-      // 完全對應的概念，見 07 spec 的說明。
-      await setupAccount(formData.applicantId, formData.sessionId, {
-        accountType: formData.cardStyle === 'style_b' ? 'type3' : 'type1',
-        transactionPassword: accountPin,
-        notificationPreference: {
-          sms: formData.notificationMethod === 'sms' || formData.notificationMethod === 'both',
-          email: formData.notificationMethod === 'email' || formData.notificationMethod === 'both',
-        },
-        termsAccepted: true,
-      });
+    // 2026-08-25：使用者明確要求——不要讓使用者卡在這一步等分析結果，
+    // 直接讓他完成整個流程、看到完成畫面；真正的開戶設定（呼叫
+    // /account-setup）留到背景分析真的跑完後才默默送出，不阻擋畫面
+    // 前進。這裡不 await 任何東西，驗證通過就立刻記錄資料＋前進。
+    updateFormData({
+      agreeTerms,
+      agreePrivacy,
+      agreeElectronic,
+      accountPin,
+    });
+    onNext();
 
-      updateFormData({
-        agreeTerms,
-        agreePrivacy,
-        agreeElectronic,
-        accountPin,
-      });
+    const applicantId = formData.applicantId;
+    const sessionId = formData.sessionId;
+    const cardStyle = formData.cardStyle;
+    const notificationMethod = formData.notificationMethod;
 
-      onNext();
-    } catch (err) {
-      setSubmitError(
-        err instanceof ApiError
-          ? `送出失敗：${err.message}`
-          : '無法連線到後端伺服器，請確認伺服器是否已啟動'
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
+    // 背景默默完成開戶設定，不 await、不阻擋上面的 onNext()。這裡
+    // 「送出審核」按一下就代表使用者已經確認完所有資料，剩下只是在
+    // 等分析跑完才能真的呼叫後端把帳戶狀態從 pending_setup 轉成
+    // opened——不需要使用者留在畫面上等這件事發生。
+    // 已知限制：如果使用者在分析真的跑完之前就關掉分頁，這段就不會
+    // 執行到，account_result 會停在 pending_setup。這是展示用的模擬
+    // 環境（見下方 setupAccount 呼叫本身也沒有接真的簡訊/Email 服務），
+    // 可以接受；真的要在生產環境做這件事，需要把「送出審核」的資料
+    // 交給後端背景工作處理，不能依賴瀏覽器分頁留著。
+    (async () => {
+      try {
+        const record = await waitForVerifyResult(applicantId, sessionId);
+        if (record.decision.verdict === 'reject') {
+          updateFormData({ verificationVerdict: 'reject' });
+          return;
+        }
+        await setupAccount(applicantId, sessionId, {
+          accountType: cardStyle === 'style_b' ? 'type3' : 'type1',
+          transactionPassword: accountPin,
+          notificationPreference: {
+            sms: notificationMethod === 'sms' || notificationMethod === 'both',
+            email: notificationMethod === 'email' || notificationMethod === 'both',
+          },
+          termsAccepted: true,
+        });
+        updateFormData({ verificationVerdict: record.decision.verdict });
+      } catch (err) {
+        console.warn('[背景開戶設定失敗]', err);
+      }
+    })();
   };
 
   const cardStyleName = formData.cardStyle === 'style_b' ? '極光冰川白 (限定版)' : '極簡深海藍 (經典版)';
@@ -145,7 +156,7 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
 
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div>
-              <span className="text-[10px] text-slate-400">中文姓名</span>
+              <span className="text-[10px] text-slate-400">真實姓名</span>
               <p className="font-bold text-slate-800">{formData.fullName || '林語堂'}</p>
             </div>
             <div>
@@ -325,7 +336,6 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
         <button
           id="submit-application-btn"
           type="button"
-          disabled={isSubmitting}
           onClick={handleSubmit}
           className={`w-full py-3.5 px-4 rounded-2xl font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer ${
             isAllTermsAgreed
@@ -333,17 +343,8 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
               : 'bg-slate-200 text-slate-400 hover:bg-slate-300'
           }`}
         >
-          {isSubmitting ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin text-white" />
-              <span>核心加密送審中...</span>
-            </>
-          ) : (
-            <>
-              <span>確認條款並送出審核</span>
-              <ArrowRight className="h-4 w-4" />
-            </>
-          )}
+          <span>確認條款並送出審核</span>
+          <ArrowRight className="h-4 w-4" />
         </button>
       </div>
 
@@ -381,7 +382,7 @@ export const TermsSubmitScreen: React.FC<TermsSubmitScreenProps> = ({
                     <p className="font-bold text-slate-800">第一條（契約之目的及範圍）</p>
                     <p>本約定書係由貴客戶與本行共同訂立，旨在規範雙方於本行數位存款帳戶相關之各項存款、轉帳、提領及其他金融服務權利義務。</p>
                     <p className="font-bold text-slate-800">第二條（帳戶開立與身分核驗）</p>
-                    <p>貴客戶同意本行依據金管會規範進行身分證 OCR 光學字元辨識及金融級活體人臉防偽核驗。核驗通過後，帳戶即行生效。</p>
+                    <p>貴客戶同意本行依據金管會規範進行身分證資料辨識及金融級活體人臉防偽核驗。核驗通過後，帳戶即行生效。</p>
                     <p className="font-bold text-slate-800">第三條（存款計息與保障）</p>
                     <p>本帳戶為新臺幣活期儲蓄存款帳戶，受中央存款保險股份有限公司最高保額新臺幣 300 萬元之依法保障。</p>
                   </>

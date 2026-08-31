@@ -24,11 +24,34 @@ def client():
 
 
 def _draw_card(size=1000, angle_deg=8.0, w=428, h=270, color=(200, 200, 200)):
-    """跟 tests/test_id_card.py 同一套合成卡片畫法。"""
-    img = np.zeros((size, size, 3), dtype=np.uint8)
+    """跟 tests/test_id_card.py 同一套合成卡片畫法（含模擬印刷文字、
+    中灰背景，見該檔案 `_draw_card()` 的說明——`rectify_id_card()`
+    新增了文字密度檢查跟亮度檢查，純色矩形／全黑背景不再算成功）。"""
+    img = np.full((size, size, 3), 90, dtype=np.uint8)
     center = (size / 2.0, size / 2.0)
-    box = cv2.boxPoints(((center[0], center[1]), (w, h), angle_deg))
-    cv2.fillConvexPoly(img, box.astype(np.int32), color)
+
+    card_left = int(center[0] - w / 2)
+    card_top = int(center[1] - h / 2)
+    cv2.rectangle(
+        img, (card_left, card_top), (card_left + w, card_top + h), color, thickness=-1
+    )
+
+    text_color = (60, 60, 60)
+    rng = np.random.default_rng(0)
+    for row in range(6):
+        y = card_top + 20 + row * 35
+        x = card_left + 20
+        for col in range(8):
+            cell_w = int(rng.integers(10, 22))
+            cv2.rectangle(img, (x, y), (x + cell_w, y + 14), text_color, thickness=-1)
+            x += cell_w + int(rng.integers(6, 14))
+            if x > card_left + w - 20:
+                break
+
+    if angle_deg != 0.0:
+        matrix = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+        img = cv2.warpAffine(img, matrix, (size, size), borderValue=(0, 0, 0))
+
     return img
 
 

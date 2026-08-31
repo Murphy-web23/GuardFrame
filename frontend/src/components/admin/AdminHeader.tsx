@@ -19,6 +19,9 @@ interface AdminHeaderProps {
   onSwitchToUserPortal: () => void;
   onLogout: () => void;
   onToggleMobileSidebar?: () => void;
+  // 2026-08-30：原本這個按鈕只有轉圈動畫，沒有真的重新拉資料，見
+  // AdminLayout.tsx loadRecords() 的說明。
+  onRefresh?: () => Promise<void> | void;
 }
 
 export const AdminHeader: React.FC<AdminHeaderProps> = ({
@@ -27,6 +30,7 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({
   onSwitchToUserPortal,
   onLogout,
   onToggleMobileSidebar,
+  onRefresh,
 }) => {
   const [showNotifications, setShowNotifications] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -54,11 +58,14 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({
     },
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
     setIsRefreshing(true);
-    setTimeout(() => {
+    try {
+      await onRefresh?.();
+    } finally {
       setIsRefreshing(false);
-    }, 600);
+    }
   };
 
   return (
@@ -97,12 +104,14 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({
         <button
           type="button"
           onClick={handleRefresh}
-          className={`p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer transition-transform ${
-            isRefreshing ? 'rotate-180 duration-500' : ''
-          }`}
+          disabled={isRefreshing}
+          className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
           title="重新整理數據"
         >
-          <RotateCcw className="h-4 w-4" />
+          {/* 改用 animate-spin 而不是原本的單次 180 度旋轉——真正打 API
+              的耗時不固定，單次轉一半的動畫在請求比較久時看起來會卡住
+              不動，持續旋轉才能撐住整段等待時間。 */}
+          <RotateCcw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
         </button>
 
         {/* Notification Bell with Dropdown */}

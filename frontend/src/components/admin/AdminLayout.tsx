@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   AdminNavSection,
   VerificationRecord,
@@ -10,7 +10,13 @@ import {
   mockVerificationTrend,
   mockSystemServices,
 } from '../../data/adminMockData';
-import { listAdminRecords, ApiError, BackendVerificationRecord } from '../../api/client';
+import {
+  listAdminRecords,
+  resolveAdminRecord,
+  AdminRecordAction,
+  ApiError,
+  BackendVerificationRecord,
+} from '../../api/client';
 import { getStoredAdminToken } from '../../data/mockAuth';
 import { AdminSidebar } from './AdminSidebar';
 import { AdminHeader } from './AdminHeader';
@@ -45,15 +51,19 @@ function mapBackendRecord(rec: BackendVerificationRecord): VerificationRecord {
 
   return {
     id: rec.id,
+    recordId: rec.recordId,
+    applicantId: rec.applicantId,
     applicantName: rec.applicantName,
     idNumberMasked: rec.applicantIdMasked,
     timestamp: rec.timestamp,
     verificationStatus: statusMap[rec.decision.verdict] || 'pending',
     riskLevel,
+    riskScore: rec.decision.riskScore,
     method: `身分證 + 人臉活體（${rec.sourceType}）`,
     handlingStatus,
     durationSec: Math.round(rec.recording.durationSec),
     notes: rec.decision.reasons.length > 0 ? rec.decision.reasons.join('；') : '核驗通過',
+    vlmSummary: rec.vlmSummary,
   };
 }
 
@@ -69,8 +79,16 @@ function computeStats(records: VerificationRecord[]): DashboardStats {
   const highRiskCount = records.filter((r) => r.riskLevel === 'high').length;
   const pct = (n: number) => (total > 0 ? Math.round((n / total) * 1000) / 10 : 0);
 
+  // 2026-08-31：「今日驗證」原本直接用 records.length（抓回來的全部
+  // 紀錄數，不是只有今天），標籤跟實際數字對不上。record.timestamp
+  // 是後端用伺服器當地時間格式化的 "YYYY-MM-DD HH:MM:SS" 字串，取前
+  // 10 碼日期跟瀏覽器本地日期字串比對即可，不用額外處理時區轉換——
+  // 展示環境的伺服器跟使用者都在同一個時區。
+  const todayStr = new Date().toLocaleDateString('sv-SE'); // "YYYY-MM-DD"
+  const totalToday = records.filter((r) => r.timestamp.startsWith(todayStr)).length;
+
   return {
-    totalToday: total,
+    totalToday,
     // 沒有「昨天」的資料可以比較，不假造變化率
     totalChangePercent: 0,
     passedCount,
@@ -134,71 +152,87 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ onSwitchToUserPortal, 
   const [isLoadingRecords, setIsLoadingRecords] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string>('');
 
-  useEffect(() => {
+  // 2026-08-30：抽成獨立函式，讓 AdminHeader 的「重新整理」按鈕能重用同一段
+  // 邏輯——原本這段只寫在 useEffect 裡、只在掛載時跑一次，畫面上的「重新
+  // 整理」按鈕跟「即時更新頻率：每 10 秒」都只是裝飾，按下去只有圖示轉一圈、
+  // 沒有真的重新打 API。這裡先只修按鈕本身，不做自動輪詢（那個影響面更大，
+  // 之後有需要再另外加）。
+  const loadRecords = useCallback(async () => {
     const token = getStoredAdminToken();
     if (!token) {
       setLoadError('登入憑證遺失，請重新登入');
       setIsLoadingRecords(false);
       return;
     }
-    listAdminRecords(token, { limit: 200 })
-      .then((res) => setRecords(res.records.map(mapBackendRecord)))
-      .catch((err) => {
-        setLoadError(
-          err instanceof ApiError ? err.message : '無法連線到後端伺服器，請確認伺服器是否已啟動'
-        );
-      })
-      .finally(() => setIsLoadingRecords(false));
+    setLoadError('');
+    try {
+      const res = await listAdminRecords(token, { limit: 200 });
+      setRecords(res.records.map(mapBackendRecord));
+    } catch (err) {
+      setLoadError(
+        err instanceof ApiError ? err.message : '無法連線到後端伺服器，請確認伺服器是否已啟動'
+      );
+    } finally {
+      setIsLoadingRecords(false);
+    }
   }, []);
+
+  useEffect(() => {
+    loadRecords();
+  }, [loadRecords]);
 
   const stats = computeStats(records);
   const riskDistribution = computeRiskDistribution(records);
   const riskAlerts = computeRiskAlerts(stats);
 
-  // 後端目前沒有任何「行員手動更新紀錄狀態」的端點（沒有 PATCH
-  // /api/admin/records/{id} 這種東西），這裡維持原本的純前端本地狀態
-  // 變更，不假裝呼叫了後端——重新整理頁面後這個操作不會被記住，
-  // 這是後端目前真實的能力邊界，不是這次改動漏做。
-  const handleUpdateRecordStatus = (recordId: string, actionName: string) => {
+  // 2026-08-29：改成真的打後端 POST /api/admin/records/{id}/action——
+  // 之前這裡只改前端本地狀態、沒有任何後端端點，重新整理頁面後動作
+  // 就會消失，通知信也不會真的寄出。現在會先等後端回應（決定案件的
+  // 最終判定並寄出對應通知信），再依照真實結果更新本地畫面，失敗時
+  // 拋出例外讓 modal 顯示錯誤訊息，不再無條件顯示成功。
+  const handleUpdateRecordStatus = async (
+    recordId: number,
+    action: AdminRecordAction
+  ): Promise<{ emailSent: boolean }> => {
+    const token = getStoredAdminToken();
+    if (!token) {
+      throw new Error('登入憑證遺失，請重新登入');
+    }
+    const result = await resolveAdminRecord(token, recordId, action);
+
     setRecords((prev) =>
       prev.map((rec) => {
-        if (rec.id === recordId) {
-          if (actionName.includes('核准')) {
-            return {
-              ...rec,
-              verificationStatus: 'passed',
-              riskLevel: 'low',
-              handlingStatus: 'completed',
-              notes: '專員人工核准通過',
-            };
-          } else if (actionName.includes('補件')) {
-            return {
-              ...rec,
-              verificationStatus: 'flagged',
-              riskLevel: 'low',
-              handlingStatus: 'completed',
-              notes: '已發送補件通知，案件標記處理完成',
-            };
-          } else if (actionName.includes('分行')) {
-            return {
-              ...rec,
-              verificationStatus: 'flagged',
-              riskLevel: 'low',
-              handlingStatus: 'completed',
-              notes: '已通知前往實體分行辦理，案件標記處理完成',
-            };
-          } else if (actionName.includes('人工')) {
-            return {
-              ...rec,
-              verificationStatus: 'pending',
-              handlingStatus: 'manual_review',
-              notes: '已轉由人工二次審查',
-            };
-          }
+        if (rec.recordId !== recordId) return rec;
+        if (action === 'approve') {
+          return {
+            ...rec,
+            verificationStatus: 'passed',
+            riskLevel: 'low',
+            handlingStatus: 'completed',
+            notes: '專員人工核准通過',
+          };
+        } else if (action === 'request_docs') {
+          return {
+            ...rec,
+            verificationStatus: 'flagged',
+            riskLevel: 'low',
+            handlingStatus: 'completed',
+            notes: '已發送補件通知，案件標記處理完成',
+          };
+        } else if (action === 'branch_visit') {
+          return {
+            ...rec,
+            verificationStatus: 'flagged',
+            riskLevel: 'low',
+            handlingStatus: 'completed',
+            notes: '已通知前往實體分行辦理，案件標記處理完成',
+          };
         }
         return rec;
       })
     );
+
+    return { emailSent: result.emailSent };
   };
 
   return (
@@ -249,6 +283,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ onSwitchToUserPortal, 
           onSwitchToUserPortal={onSwitchToUserPortal}
           onLogout={onLogout}
           onToggleMobileSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+          onRefresh={loadRecords}
         />
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">

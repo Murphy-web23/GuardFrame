@@ -146,7 +146,7 @@ def _cross_correlate(reflect_series, light_series, fps):
     return correlation, latency_ms
 
 
-def analyze_photometric(frames: list, fps: float, light_log: dict) -> dict:
+def analyze_photometric(frames: list, fps: float, light_log: dict, buffer_ms: float = 0.0) -> dict:
     """檢查臉部反射是否與螢幕光序列同步。
 
     參數:
@@ -156,6 +156,16 @@ def analyze_photometric(frames: list, fps: float, light_log: dict) -> dict:
             長度約 90-150（3-5 秒 @ 30fps）
         fps: float
         light_log: dict           前端錄影時記錄的光序列，格式見 §5.2
+        buffer_ms: float           2026-08-25 新增：前端切 phases.lighting
+            時，真人測試發現「剛好卡在理論時長邊界」切片，只要當次實際
+            延遲比量到的還多一點點，燈光序列尾端就會被整段切掉、永久
+            遺失訊號（見 FaceVerificationEngine.tsx 的說明）。改成頭尾
+            各加 LIGHTING_BUFFER_MS 緩衝再送出，這裡的 buffer_ms 就是
+            那個值——frames[0] 現在對應的是 light_log 時間軸上的
+            `-buffer_ms`，不是 0，算 t_ms 時要扣掉這個偏移量，緩衝影格
+            才會落在序列開始前（light_intensity_at() 會當作「第一段」
+            的亮度處理，不是憑空產生假訊號）。呼叫端沒有加緩衝的話
+            （例如舊測試直接呼叫這個函式）維持預設 0.0，行為不變。
 
     回傳:
         {
@@ -208,7 +218,7 @@ def analyze_photometric(frames: list, fps: float, light_log: dict) -> dict:
     reflect_filled = _fill_missing(reflect_raw)
 
     light_series = np.array(
-        [seq.light_intensity_at(light_log, i / fps * 1000.0) for i in range(len(frames))]
+        [seq.light_intensity_at(light_log, i / fps * 1000.0 - buffer_ms) for i in range(len(frames))]
     )
 
     correlation, latency_ms = _cross_correlate(reflect_filled, light_series, fps)

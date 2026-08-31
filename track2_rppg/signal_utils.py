@@ -60,6 +60,74 @@ def extract_roi_signal(frames, landmarks_list, roi_indices):
     return signal
 
 
+def pos_algorithm(rgb_signal, fps, window_sec=1.6):
+    """POS（Plane-Orthogonal-to-Skin）演算法，Wang et al. 2017
+    "Algorithmic Principles of Remote-PPG"。
+
+    2026-08-26：原本只取綠色通道當作 rPPG 訊號（`_analyze_single_roi()`
+    的舊寫法），是最簡單的作法，但對動作/光線雜訊很敏感——真人測試
+    一路下來 SNR 持續是負值、roiConsistency 常常卡在 0，就算已經排除
+    了轉頭/揮手這些明顯的動作污染源，訊號品質還是不穩定。POS 是
+    rPPG 文獻裡專門處理這個問題的標準方法：不是只看單一通道，而是把
+    R、G、B 三個通道依「同一時間窗內的平均值」做正規化（消除整體亮度
+    變化，例如動作造成的反光強弱起伏），再投影到一個跟膚色方向正交的
+    平面上——這個平面的方向是理論推導出來的皮膚反射光學模型固定值，
+    不是憑經驗湊的參數，對動作與光線變化的穩健性比單一通道方法好
+    很多，是目前非深度學習方法裡的標準做法之一。
+
+    演算法步驟（逐一滑動時間窗，重疊相加）：
+        1. 每個時間窗內，各通道除以窗內時間平均值做正規化
+        2. 投影到兩個固定方向：S1 = Gn - Bn，S2 = Gn + Rn - 2Bn
+        3. 用兩者的標準差比例加權合併：h = S1 + (std(S1)/std(S2)) * S2
+        4. 把每個窗算出的 h 疊加回原始時間軸（重疊部分直接相加，
+           標準 POS 論文的 overlap-add 做法）
+
+    參數:
+        rgb_signal: np.ndarray，shape (T, 3)，R、G、B 三通道，
+            不可以有 NaN（呼叫前要先用 interpolate_missing() 補好）
+        fps: float
+        window_sec: float，滑動窗長度（秒），論文建議約 1.6 秒
+            （心跳週期的量級），這裡沿用原論文的預設值
+
+    回傳:
+        np.ndarray，shape (T,)，合成後的脈搏訊號，還沒經過
+        detrend/bandpass，維持原始時間軸長度不變
+    """
+    rgb = np.asarray(rgb_signal, dtype=np.float64)
+    if rgb.ndim != 2 or rgb.shape[1] != 3:
+        raise ValueError(f"pos_algorithm 需要 shape (T, 3) 的訊號，收到 {rgb.shape}")
+
+    n = len(rgb)
+    win_len = max(int(round(window_sec * fps)), 2)
+    if n < win_len:
+        # 訊號太短做不了完整的滑動窗，退化成整段當一個窗處理，
+        # 這種情況下面的 bandpass_filter 多半也會因為長度不足而失敗，
+        # 這裡先合理處理，不特別報錯。
+        win_len = n
+
+    h_sum = np.zeros(n, dtype=np.float64)
+
+    for start in range(0, n - win_len + 1):
+        end = start + win_len
+        window = rgb[start:end]
+        mean_c = window.mean(axis=0)
+        if np.any(mean_c <= 1e-9):
+            continue
+        cn = window / mean_c
+
+        s1 = cn[:, 1] - cn[:, 2]  # G - B
+        s2 = cn[:, 1] + cn[:, 0] - 2.0 * cn[:, 2]  # G + R - 2B
+
+        std1 = s1.std()
+        std2 = s2.std()
+        alpha = std1 / std2 if std2 > 1e-9 else 0.0
+
+        h = s1 + alpha * s2
+        h_sum[start:end] += h - h.mean()
+
+    return h_sum
+
+
 def interpolate_missing(signal):
     """把 extract_roi_signal 留下的 np.nan 用線性內插補起來。
 
@@ -185,6 +253,7 @@ def estimate_heart_rate(
 
     band_idx = np.flatnonzero(band)
     peak_idx = band_idx[np.argmax(psd[band])]
+    peak_idx = _prefer_fundamental_over_harmonic(freqs, psd, band, peak_idx, low)
 
     peak_freq = _refine_peak(freqs, psd, peak_idx)
     snr = _band_snr(freqs, psd, peak_freq, low, high)
@@ -224,6 +293,52 @@ def _band_snr(freqs, psd, peak_freq, low, high):
         return 0.0
 
     return float(10.0 * np.log10(signal_power / noise_power))
+
+
+def _prefer_fundamental_over_harmonic(freqs, psd, band, peak_idx, low):
+    """如果目前選到的峰值很可能是真正基頻的二次諧波，改選較低頻那個。
+
+    2026-08-22：真人測試發現的問題——心跳波形不是純正弦（收縮期陡、
+    舒張期緩），二次諧波本來就帶有真實的生理能量（`_band_snr()` 的
+    docstring 也是這樣算 SNR 的）。單純取頻帶內功率最大值當主頻，沒有
+    排除「雜訊/動作干擾讓諧波那格功率反超基頻」這種狀況，會估出剛好
+    兩倍的心率。真人樣本裡，額頭/左臉頰估出 110+ bpm、右臉頰估出
+    55 bpm，前兩者剛好是後者的兩倍，就是誤選到諧波的典型模式。
+
+    做法：檢查目前峰值頻率的一半是否還落在合法頻帶內，附近有沒有一個
+    功率不算太低的候選峰值（達到 config.RPPG_HARMONIC_DEMOTE_RATIO
+    這個比例）——如果有，代表基頻訊號其實還在、只是被諧波蓋過去，
+    改採這個較低頻的峰值。
+
+    參數:
+        freqs, psd: welch() 的輸出
+        band: bool 陣列，跟 freqs 同長度，標出合法搜尋頻帶
+        peak_idx: int，目前選到（頻帶內全域最大值）的索引
+        low: float，頻帶下界（Hz）
+
+    回傳:
+        int，最終採用的峰值索引（可能跟輸入的 peak_idx 相同）
+    """
+    half_freq = freqs[peak_idx] / 2.0
+    if half_freq < low:
+        return peak_idx
+
+    width = config.RPPG_SNR_HARMONIC_WIDTH
+    sub_mask = band & (np.abs(freqs - half_freq) <= width)
+    if not np.any(sub_mask):
+        return peak_idx
+
+    sub_band_idx = np.flatnonzero(sub_mask)
+    sub_peak_idx = sub_band_idx[np.argmax(psd[sub_mask])]
+
+    peak_power = psd[peak_idx]
+    if peak_power <= 0:
+        return peak_idx
+
+    if psd[sub_peak_idx] / peak_power >= config.RPPG_HARMONIC_DEMOTE_RATIO:
+        return sub_peak_idx
+
+    return peak_idx
 
 
 def _refine_peak(freqs, psd, peak_idx):

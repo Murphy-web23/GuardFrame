@@ -22,6 +22,14 @@ import numpy as np
 
 import config
 
+# 2026-08-31：曾經試過在餵進 MediaPipe Hand Landmarker 前，先用 CLAHE
+# 對比強化＋銳化處理影格，想解決 Chrome 錄影動態模糊導致揮手循環偵測
+# 不到的問題。用 507/513/514 三支已知失敗的真機影片實測：完全沒有
+# 改善，513 那筆甚至從偵測到 1 次循環退步成 0 次——動態模糊造成的邊緣
+# 資訊在編碼當下已經真的遺失，銳化沒有邊緣可以加強，反而放大雜訊。
+# 已經證實無效，不要再往這個方向猜，需要的話去讀當天（08-31）的對話
+# 紀錄，裡面有完整的量測數字。
+
 
 class ModelNotFoundError(RuntimeError):
     """MediaPipe Hand 模型檔不存在。"""

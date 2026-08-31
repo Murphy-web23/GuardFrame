@@ -18,11 +18,49 @@ from image_utils import id_card
 
 
 def _draw_card(size=1000, angle_deg=8.0, w=428, h=270, color=(200, 200, 200)):
-    """畫一張背景全黑、中央有一個（可旋轉的）矩形卡片的合成測試圖。"""
-    img = np.zeros((size, size, 3), dtype=np.uint8)
+    """畫一張背景中灰、中央有一個（可旋轉的）矩形卡片的合成測試圖。
+
+    2026-08-27：`rectify_id_card()` 新增了文字密度檢查（見
+    `image_utils/id_card.py` `_count_text_regions()` 的說明），純色
+    矩形不再算成功——這裡在卡片內部畫幾排小色塊模擬印刷文字欄位，
+    讓這個 fixture 繼續代表「像證件的東西」，不是在繞過新加的檢查。
+
+    2026-08-27：同時新增了亮度檢查（`config.ID_CARD_MIN_BRIGHTNESS`），
+    背景改成全黑的話，整張圖平均亮度會被大面積黑背景拉到門檻以下——
+    背景改成中灰色，這個 fixture 才能同時代表「一張合理曝光的照片」。
+    """
+    img = np.full((size, size, 3), 90, dtype=np.uint8)
     center = (size / 2.0, size / 2.0)
-    box = cv2.boxPoints(((center[0], center[1]), (w, h), angle_deg))
-    cv2.fillConvexPoly(img, box.astype(np.int32), color)
+
+    # 先在角度 0（軸對齊）畫卡片本體＋文字，最後才整張圖一起旋轉——
+    # 這樣文字一定落在卡片矩形內部，不用另外處理旋轉座標轉換。
+    card_left = int(center[0] - w / 2)
+    card_top = int(center[1] - h / 2)
+    cv2.rectangle(
+        img,
+        (card_left, card_top),
+        (card_left + w, card_top + h),
+        color,
+        thickness=-1,
+    )
+    text_color = (60, 60, 60)
+    rng = np.random.default_rng(0)
+    for row in range(6):
+        y = card_top + 20 + row * 35
+        x = card_left + 20
+        for col in range(8):
+            cell_w = int(rng.integers(10, 22))
+            cv2.rectangle(
+                img, (x, y), (x + cell_w, y + 14), text_color, thickness=-1
+            )
+            x += cell_w + int(rng.integers(6, 14))
+            if x > card_left + w - 20:
+                break
+
+    if angle_deg != 0.0:
+        matrix = cv2.getRotationMatrix2D(center, angle_deg, 1.0)
+        img = cv2.warpAffine(img, matrix, (size, size), borderValue=(0, 0, 0))
+
     return img
 
 

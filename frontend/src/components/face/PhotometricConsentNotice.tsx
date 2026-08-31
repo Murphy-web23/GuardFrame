@@ -43,9 +43,8 @@ export const PhotometricConsentNotice: React.FC<PhotometricConsentNoticeProps> =
       <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200/80 text-xs text-amber-800 leading-relaxed flex items-start gap-2">
         <Sparkles className="h-4 w-4 shrink-0 mt-0.5 text-amber-500" />
         <p>
-          驗證過程中，螢幕會顯示約 <strong>3 秒鐘、5 段快速切換的柔和色彩</strong>
-          （用來確認畫面前確實是真人，不是預錄影片）。切換頻率與亮度已依照
-          WCAG 2.3.1 安全門檻設計，一般情況下不會造成不適。
+          驗證過程中，螢幕會顯示約 <strong>3 秒鐘、5 段快速切換的柔和色彩</strong>。
+          切換頻率與亮度已依照 WCAG 2.3.1 安全門檻設計，一般情況下不會造成不適。
         </p>
       </div>
 
