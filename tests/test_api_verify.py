@@ -309,6 +309,21 @@ def test_verify_full_pipeline_writes_record_when_quality_passes(
             "contrast": 50.0, "overexposedRatio": 0.0, "faceRatio": 0.5, "message": "",
         },
     )
+    # 2026-08-30：合成測試資料常常會判定成 review（門檻本來就是拿真人
+    # 樣本校準的，假資料踩不準很正常），一旦 review 就會呼叫真的
+    # summarize_verification() 打地端 Ollama——這支測試要驗證的是管線
+    # 走不走得通，不是 VLM 這層本身（那個有 vlm_summary/README.md 自己
+    # 的手動測試方式），不該讓測試結果依賴一個外部服務有沒有裝、有沒有
+    # 啟動、模型有沒有暖機，見 2026-08-30 對話紀錄那次直接把測試機
+    # 掛住的教訓。
+    monkeypatch.setattr(
+        routes,
+        "summarize_verification",
+        lambda record, anomaly_frames: {
+            "available": False, "frameObservations": [], "summary": "",
+            "model": "", "latencyMs": 0.0,
+        },
+    )
 
     video_path = tmp_path / "textured.mp4"
     total_frames = _ACTION_FRAMES + _LIGHTING_FRAMES

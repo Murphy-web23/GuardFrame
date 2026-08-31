@@ -166,6 +166,12 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
   // Voice Guidance Settings & Audio Controller
   const [voiceEnabled, setVoiceEnabled] = useState<boolean>(true);
+  // 2026-08-30：純觀察用，不影響任何實際行為——手機語音真人測試回報
+  // 完全沒聲音，但音效正常，之前亂猜著加解鎖邏輯反而把音效也弄壞了
+  // （已經退回去）。這次只加診斷資訊、不碰邏輯，把 speechSynthesis
+  // 實際發生什麼事顯示在畫面上（手機沒有 remote devtools 可以看
+  // console），下次測試才有真的數據可以看，不是繼續用猜的。問題排查
+  //完應該要把這個拿掉，不是正式功能。
   const lastSpokenKeyRef = useRef<string>('');
   const activeUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -341,8 +347,8 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
       // Cancel previous speech safely
       window.speechSynthesis.cancel();
 
-      // Micro-timeout prevents Chromium bug where cancel() cancels the immediate next speak()
-      setTimeout(() => {
+      // Micro-timeout prevents Chromium bug where cancel() cancels the immediate next speak()。
+      const doSpeak = () => {
         try {
           if (window.speechSynthesis.paused) {
             window.speechSynthesis.resume();
@@ -353,24 +359,35 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
           // 手機版語音聽起來偏快，同樣的 rate 數值在不同裝置的原生 TTS
           // 引擎上基準語速不同，手機端另外調低。只在這裡分流，其餘
           // speakPrompt() 邏輯兩邊完全共用、沒有其他改動。
-          utterance.rate = isDesktop ? 1.05 : 0.85;
+          utterance.rate = isDesktop ? 1.05 : 1.0;
           utterance.pitch = 1.0;
           utterance.volume = 1.0;
 
-          const voices = availableVoicesRef.current.length > 0 
-            ? availableVoicesRef.current 
-            : window.speechSynthesis.getVoices() || [];
-          
-          const twVoice = voices.find(
-            (v) => v.lang === 'zh-TW' || v.lang === 'zh_TW' || v.lang === 'cmn-Hant-TW' || v.lang.includes('TW') || v.lang === 'zh-HK'
-          ) || voices.find((v) => v.lang.startsWith('zh'));
+          // 2026-08-30：改成每次都即時重新呼叫 getVoices()，不要用
+          // availableVoicesRef 這個很早之前快取的清單——查到的資料顯示
+          // Android 上很多語音其實是 Google 的「網路語音」（要連線到
+          // Google 伺服器才能合成，不是手機本機處理），這類語音在網路
+          // 狀況不理想時容易直接回報 synthesis-failed。優先挑
+          // localService === true（本機處理，不靠網路）的中文語音，
+          // 真的找不到本機語音才退回原本「隨便挑一個 zh 開頭」的邏輯。
+          const voices = window.speechSynthesis.getVoices() || [];
+          const zhVoices = voices.filter(
+            (v) => v.lang === 'zh-TW' || v.lang === 'zh_TW' || v.lang === 'cmn-Hant-TW' || v.lang.includes('TW') || v.lang === 'zh-HK' || v.lang.startsWith('zh')
+          );
+          const twVoice = zhVoices.find((v) => v.localService) || zhVoices[0];
 
+          // 2026-08-30：先前試過「手機版乾脆不指定語音物件」沒解決
+          // 問題，收回。查資料後改用更有根據的做法（見上面 zhVoices/
+          // twVoice 的說明）：優先選 localService 的語音、且每次都
+          // 即時重新查詢，不用舊快取——這次兩邊（手機/桌面）都套用同一套
+          // 邏輯，不用再猜哪邊該不該指定。
           if (twVoice) {
             utterance.voice = twVoice;
           }
 
           // Retain ref to prevent V8 garbage collection
           activeUtteranceRef.current = utterance;
+          utterance.onstart = () => {};
           utterance.onend = () => {
             activeUtteranceRef.current = null;
           };
@@ -382,7 +399,35 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         } catch (innerErr) {
           console.warn('SpeechSynthesis speak failed:', innerErr);
         }
-      }, 50);
+      };
+
+      if (isDesktop) {
+        // 桌面版完全不動：原本的固定 50ms micro-timeout。
+        setTimeout(doSpeak, 50);
+      } else {
+        // 2026-08-30：手機版真人測試抓到具體錯誤碼 utterance.onerror =
+        // "synthesis-failed"——語音清單、聲音本身都正常抓得到，代表不是
+        // 「沒裝語音包」，是引擎當下合成失敗。playMobileAudioCue()（上面
+        // 那行）用 <audio> 元素播提示音，跟 Android 系統層級的 TTS 服務
+        // 搶音訊焦點是已知的常見成因——提示音還沒播完，TTS 引擎搶不到
+        // 音訊輸出就直接回報合成失敗。前一版用寫死的 400ms 延遲賭提示音
+        // 播完，真人測試證實猜的時間不夠、問題還在。改成真的監聽提示音
+        // 元素的 'ended' 事件——提示音真正播完的當下才叫 speechSynthesis，
+        // 不用再猜時間。同時保留一個較短的保險逾時（600ms，仍比原本的
+        // 猜測值短），避免提示音因為自動播放被擋、沒有 src 等原因永遠
+        // 不觸發 'ended' 時，語音整個不會出現。
+        const cueAudio = cueType === 'success' ? mobileSuccessAudioRef.current : mobileActionAudioRef.current;
+        let spoken = false;
+        const speakOnce = () => {
+          if (spoken) return;
+          spoken = true;
+          doSpeak();
+        };
+        if (cueAudio) {
+          cueAudio.addEventListener('ended', speakOnce, { once: true });
+        }
+        setTimeout(speakOnce, 600);
+      }
     } catch (e) {
       console.warn('Speech synthesis error:', e);
     }
@@ -398,31 +443,47 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
           streamRef.current = null;
         }
 
-        // 2026-08-21：鏡頭框（#camera-first-viewfinder）桌面版實測寬高比
-        // 約 0.8（直的），手機版約 0.6（更窄更直）。畫面用 object-cover
-        // 撐滿框，如果跟攝影機原本要求的長寬比（改之前是桌面 16:9 橫的、
-        // 手機 3:4）差太多，會裁掉一大塊「螢幕上看不到、但後端還是收
-        // 得到」的畫面，使用者對準框內看起來夠大，後端算出來的 faceRatio
-        // 卻很小——這裡改成跟框比例接近，讓使用者在螢幕上看到的畫面盡量
-        // 貼近後端實際分析的畫面。如果要退回原本的橫向設定，把這個
-        // aspectRatio 區塊拿掉、width/height 改回 1280/720（桌面）或
-        // 720/960（手機）即可。
+        // 2026-08-21：鏡頭框（#camera-first-viewfinder）畫面用 object-cover
+        // 撐滿框（見下面 <video> 的 className），不管鏡頭實際擷取的長寬比
+        // 是什麼，畫面永遠會被裁成填滿框——顯示層的裁切早就跟擷取層的
+        // 長寬比無關。原本想靠壓窄 aspectRatio 讓「螢幕上看到的」貼近
+        // 「後端實際分析的」，這個假設本身沒必要，卻是後來 08-28 那個
+        // bug 的元凶（見下面）。
         //
-        // 2026-08-28：手機版 0.6 這個比例太窄，真人測試回報前鏡頭「放
-        // 大」很多，要把手機拿遠才能讓全臉入鏡，連帶照明測試階段因為
-        // 拿遠也照不到反光。懷疑是部分手機鏡頭為了滿足這麼窄的裁切
-        // 比例，選擇用數位變焦裁切畫面中央，而不是單純裁掉左右兩側。
-        // 放寬到 0.75（沒有 #camera-first-viewfinder 那麼窄，但比原本
-        // 0.6 溫和很多），視野會比較自然，容器本身還是 object-cover
-        // 撐滿框，faceRatio 對不齊的風險沒有完全消失、但應該比原本
-        // 0.6 好，之後如果真人測試發現 faceRatio 又出問題，這是第一個
-        // 要回頭檢查的地方。
+        // 2026-08-28：手機版曾經设 0.6、後來鬆到 0.75，兩個都還是太窄——
+        // 真人測試回報前鏡頭「放大」很多，要把手臂完全伸直才能讓全臉
+        // 入鏡，懷疑是手機為了滿足這麼窄的長寬比，用數位變焦裁切畫面
+        // 中央，等於視野被縮小，逼人站遠。
+        //
+        // 2026-08-30：證實了——查 iOS 錄下來的影片，實際解出來是
+        // 1100x660（橫向，寬高剛好對調），代表 iOS 根本沒有照要求的
+        // 660x1100 給，Android 則是報告要手臂伸直才能整臉入鏡，兩邊
+        // 都指向同一個成因。只調手機版：放寬 aspectRatio（不再窄窄地
+        // 卡在接近螢幕框的比例），讓鏡頭用比較接近原生的視角，不逼
+        // 手機數位變焦。畫面裁切完全交給下面的 object-cover，跟這裡的
+        // 長寬比無關，放寬不會讓螢幕上看到的畫面跑掉。
+        // QUALITY_FACE_RATIO_MIN 只有 0.10，目前實測（真人樣本）都在
+        // 0.19-0.21，放寬視角後續空間還很夠，不會反過來卡到這個門檻。
+        // 桌面版沒有回報過這個問題，維持原本的 864/1080/0.8 不動。
+        //
+        // 2026-08-30：清晰度過不了關（S23 Ultra 這種鏡頭規格不差的手機
+        // 也一樣），查資料證實 Android Chrome 的 MediaRecorder **不遵守**
+        // videoBitsPerSecond 設定（macOS/iOS 都會遵守，Android 是唯一
+        // 例外），實測位元率被鎖在約 2.5Mbps 上限，不管解析度多大都一樣
+        // ——代表剛加的 6Mbps 設定在 Android 上形同虛設，真正能動的只有
+        // 解析度：同樣被鎖死的位元率預算，切給越多像素、每個像素分到的
+        // 資料量越少、畫質就越糊。手機版把目標解析度從 960 降到 640
+        // （像素數少於一半），讓固定的位元率預算集中在較少的像素上，
+        // 藉此提升清晰度；長寬比依然不鎖（跟上面放寬視角的修法相容，
+        // 不會重新逼手機數位變焦）。桌面版的位元率設定原本就有效
+        // （macOS 平台會遵守），不受這個問題影響，維持 864/1080 不動。
+        const MOBILE_CAPTURE_SIZE = 640;
         const constraints: MediaStreamConstraints = {
           video: {
             facingMode: 'user',
-            width: { ideal: isDesktop ? 864 : 660 },
-            height: { ideal: isDesktop ? 1080 : 1100 },
-            aspectRatio: { ideal: isDesktop ? 0.8 : 0.75 },
+            width: { ideal: isDesktop ? 864 : MOBILE_CAPTURE_SIZE },
+            height: { ideal: isDesktop ? 1080 : MOBILE_CAPTURE_SIZE },
+            ...(isDesktop ? { aspectRatio: { ideal: 0.8 } } : {}),
             // 要求瀏覽器盡量用固定的 fps 錄——後端切影格區間時是用這個
             // 事先宣告的 fps 算的（見 verificationRecording.ts 頂部
             // 的說明），沒有這個限制的話瀏覽器選的 fps 可能落差很大。
@@ -793,6 +854,15 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
     // audioCtxRef.current 這個之後會真的拿來播放提示音的同一個物件。
     if (typeof window !== 'undefined') {
       if ('speechSynthesis' in window) {
+        // 2026-08-30：試過在這裡加一個音量 0 的 speak() 呼叫來解鎖手機
+        // 語音（理由見下面被拿掉的那段），結果真人測試回報**連原本能用
+        // 的音效提示都跟著壞掉**——懷疑 speak() 這個呼叫本身在 Android
+        // Chrome 上會影響同一次使用者手勢堆疊內接下來的 AudioContext/
+        // <audio> 解鎖判定（可能是搶了 media session、或讓瀏覽器認定
+        // 這次使用者手勢已經被消耗掉）。這是本末倒置——音效原本就正常
+        // 能用，不該為了修語音把音效也弄壞。先退回只做 cancel()/
+        // resume()，語音消失的問題保留、之後要修再另外想辦法, 不要
+        // 在同一個使用者手勢的呼叫堆疊裡插一個真的 speak()。
         window.speechSynthesis.cancel();
         window.speechSynthesis.resume();
       }
@@ -862,9 +932,20 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
     ];
     const mimeType = mimeCandidates.find((t) => MediaRecorder.isTypeSupported(t)) || '';
     recordedChunksRef.current = [];
-    const recorder = mimeType
-      ? new MediaRecorder(streamRef.current, { mimeType })
-      : new MediaRecorder(streamRef.current);
+    // 2026-08-30：真人測試（Android，S23 Ultra，鏡頭硬體規格不差）持續
+    // 回報清晰度過不了關（連續測到 23-32，門檻 50），iPhone 完全沒事。
+    // 沒有指定 videoBitsPerSecond 時，MediaRecorder 用瀏覽器自己的預設
+    // 位元率——同一天稍早把手機版鏡頭視角從窄長寬比放寬到 960x960
+    // （為了解決要伸長手臂才能整臉入鏡的問題），畫面解析度變大了，
+    // 如果編碼位元率沒有跟著調高，同樣的資料量攤到更多像素上，畫質
+    // 就會被壓得更糊——這比較可能是「換視角之後才開始」的清晰度問題
+    // 真正成因，不是鏡頭硬體或手震。明確指定一個夠高的位元率，不讓
+    // 瀏覽器自己選保守的預設值。
+    const recorderOptions: MediaRecorderOptions = {
+      ...(mimeType ? { mimeType } : {}),
+      videoBitsPerSecond: 6_000_000,
+    };
+    const recorder = new MediaRecorder(streamRef.current, recorderOptions);
     recorder.ondataavailable = (e) => {
       if (e.data.size > 0) recordedChunksRef.current.push(e.data);
     };
@@ -917,7 +998,7 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         CAMERA VIEWPORT CONTAINER
         ========================================================================
       */}
-      <div 
+      <div
         id="camera-first-viewfinder"
         className={`relative w-full overflow-hidden bg-slate-950 shadow-2xl border-4 transition-all duration-300 ${
           isDesktop 

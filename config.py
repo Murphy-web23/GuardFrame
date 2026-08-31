@@ -216,6 +216,13 @@ MEDIAPIPE_HAND_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
     "hand_landmarker/float16/1/hand_landmarker.task"
 )
+# 2026-08-30：曾經試過把 MEDIAPIPE_HAND_MIN_DETECTION_CONFIDENCE 降到
+# 0.3，想解決 Chrome 錄的影片較模糊、揮手循環常被判定 0 次的問題。用
+# id=508（確認為假影片）實測結果：整體風險分數從 62 降到 50，判定從
+# 系統自動 reject 弱化成需要人工 review——沒有讓假影片直接通過，但
+# 確實削弱了防線，risk/效益比不划算，改回原始值 0.5。Chrome 揮手偵測
+# 問題如果要繼續處理，方向是影格前處理（銳化/對比強化），不要再調這個
+# 門檻。
 MEDIAPIPE_HAND_MIN_DETECTION_CONFIDENCE = 0.5
 MEDIAPIPE_HAND_MIN_PRESENCE_CONFIDENCE = 0.5
 MEDIAPIPE_HAND_MIN_TRACKING_CONFIDENCE = 0.5

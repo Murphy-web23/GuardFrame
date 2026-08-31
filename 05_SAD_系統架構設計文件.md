@@ -18,7 +18,7 @@
                       │
 ┌─────────────────────┴─────────────────────┐
 │              服務層（Service）              │
-│  影像前處理 │ 五層防禦 │ 決策融合 │ VLM輔助模組  │
+│  影像前處理 │ 四層防禦 │ 決策融合 │ VLM輔助模組  │
 └─────────────────────┬─────────────────────┘
                       │
 ┌─────────────────────┴─────────────────────┐
@@ -94,7 +94,7 @@ FastAPI 接收，以 bcrypt/passlib 對輸入密碼進行雜湊
     ├── face_utils.py — 人臉偵測與對齊（InsightFace）
     ├── landmarks.py — 關鍵點封裝（MediaPipe）
     ├── schemas.py — 資料結構定義（Pydantic）
-    └── fusion.py — 五層加權融合與決策邏輯
+    └── fusion.py — 四層加權融合與決策邏輯
 ```
 
 ### 對外接口總表
@@ -103,7 +103,7 @@ FastAPI 接收，以 bcrypt/passlib 對輸入密碼進行雜湊
 |---|---|---|
 | 對照組 | `analyze_baseline()` | B |
 | Track 1 | `detect_synthetic()` | A |
-| Track 2 | `analyze_rppg()` | B |
+| Track 2（已停用） | `analyze_rppg()` | B |
 | Track 3 | `analyze_photometric()` | B |
 | Track 4 | `analyze_occlusion()` | B |
 | 證件矯正 | `rectify_id_card()` | B |
@@ -170,7 +170,7 @@ def summarize_verification(record: dict, anomaly_images: list) -> dict:
 
     參數:
         record: dict
-            完整驗證紀錄（五層分數皆已計算完成）
+            完整驗證紀錄（四層分數皆已計算完成）
         anomaly_images: list[np.ndarray]
             Track 4 回傳的 anomalyFrames 對應的原始影格，通常 3-5 張
             由 B 依索引取出後傳入
@@ -188,7 +188,7 @@ def summarize_verification(record: dict, anomaly_images: list) -> dict:
 
     實作要點:
         - 逐格提問只問「觀察到什麼」，不問「是不是偽造」
-          判定由五層負責，VLM 只做描述，以降低幻覺
+          判定由四層負責，VLM 只做描述，以降低幻覺
         - 不參與判定，不影響 riskScore 與 verdict
         - 執行失敗時回傳 available=False，前端隱藏該區塊
     """
@@ -252,7 +252,12 @@ def analyze_baseline(frames: list, fps: float, challenges: list) -> dict:
     """
 ```
 
-### A-4｜Track 2：生理訊號
+### A-4｜Track 2：生理訊號 **【2026-08-29 停用，不參與風險融合】**
+
+> 實測 20 筆真人樣本後，訊噪比未曾達到判定門檻，且主流商用活體驗證
+> 廠商亦未見以 rPPG 作為正式產品技術，判斷為消費級鏡頭硬體限制而非
+> 工程缺陷，決定停用。以下規格為原始設計，程式碼保留，見
+> `track2_rppg/analyzer.py::disabled_result()`。
 
 ```python
 # track2_rppg/analyzer.py
@@ -443,10 +448,10 @@ FastAPI /api/applications/{id}/verify 接收
         ↓ 合格
 影像前處理（抽影格、InsightFace 對齊）
         ↓
-   ┌────┬────┬────┬────┬────┐
-   ↓    ↓    ↓    ↓    ↓
- 對照組 Track1 Track2 Track3 Track4
-   └────┴────┴────┴────┴────┘
+   ┌────┬────┬────┬────┐
+   ↓    ↓    ↓    ↓
+ 對照組 Track1 Track3 Track4
+   └────┴────┴────┴────┘
         ↓
 fusion.py 加權融合
         ↓

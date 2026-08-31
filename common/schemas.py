@@ -228,6 +228,19 @@ class VlmSummary(CamelModel):
 
 class VerificationRecord(CamelModel):
     id: str
+    # 2026-08-30：id 是給人看的格式化字串（"VF-20260830-0472"），後台
+    # 「發送補件通知／通知前往實體分行／確認核准通過」三顆按鈕呼叫
+    # POST /admin/records/{record_id}/action 時，那支端點的路徑參數要的
+    # 是純數字的資料庫 id（見 api/routes.py resolve_admin_record()），
+    # 原本前端直接把 id 這個格式化字串傳過去，FastAPI 解析路徑參數失敗、
+    # 回傳的驗證錯誤又被前端直接塞進 String()，變成使用者看到的
+    # "[object Object]"——補這個獨立欄位，兩種用途不要共用同一個 id。
+    record_id: int
+    # 2026-08-30：後台複核案件要能對照到 data/verification_videos/
+    # {applicant_id}/{record_id}.webm 這個實際存檔路徑，才能讓審核人員
+    # 自己去找原始影片看——沒有另外做下載/串流端點（範圍留給之後），
+    # 先讓後台顯示這兩個數字，行員自己去檔案系統找就好。
+    applicant_id: int
     timestamp: str
     applicant_name: str
     applicant_id_masked: str

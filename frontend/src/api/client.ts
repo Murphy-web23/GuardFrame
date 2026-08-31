@@ -34,10 +34,15 @@ async function request<T>(
     // /verify 品質不合格的 422 沒有 detail 欄位，而是 {"quality": {message, ...}}
     // （見 07 spec §三 API 6／image_utils/quality.py）；其餘錯誤都是
     // {"detail": ...}——這裡統一包成 ApiError，優先取比較好懂的那個欄位。
-    const detailMessage =
-      body && typeof body === 'object' && 'detail' in body
-        ? String((body as any).detail)
-        : null;
+    //
+    // 2026-08-30：detail 不一定是字串——FastAPI 路徑/請求參數解析失敗時
+    // （例如傳了格式錯誤的 id），detail 會是一包驗證錯誤物件的陣列，
+    // 直接 String() 對物件/陣列做轉換會印出 "[object Object]" 這種對
+    // 使用者毫無意義的文字（曾經真的發生過，見後台補件通知按鈕的
+    // bug）。是字串才直接用，不是字串就退回去顯示 HTTP 狀態碼版本的
+    // 通用訊息，而不是硬轉成一串看不懂的東西。
+    const rawDetail = body && typeof body === 'object' ? (body as any).detail : undefined;
+    const detailMessage = typeof rawDetail === 'string' ? rawDetail : null;
     const qualityMessage =
       body && typeof body === 'object' && 'quality' in body
         ? String((body as any).quality?.message ?? '')
@@ -295,6 +300,11 @@ export async function adminLogin(
 // 用得到的欄位，不是完整型別，需要更多欄位時再補。
 export interface BackendVerificationRecord {
   id: string;
+  // 2026-08-30：格式化顯示字串（"VF-..."），不能拿去打
+  // /admin/records/{record_id}/action——那支端點要純數字 id，見下面
+  // recordId 欄位跟 common/schemas.py VerificationRecord 的說明。
+  recordId: number;
+  applicantId: number;
   timestamp: string;
   applicantName: string;
   applicantIdMasked: string;

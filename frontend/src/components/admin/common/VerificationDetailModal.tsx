@@ -32,7 +32,7 @@ interface VerificationDetailModalProps {
   // AdminLayout.tsx handleUpdateRecordStatus），回傳是否真的寄出通知信，
   // 讓這裡可以誠實顯示「已寄出」還是「動作完成但信件寄送失敗」，
   // 不再是點下去就無條件顯示成功的假回饋。
-  onUpdateStatus?: (recordId: string, action: AdminRecordAction) => Promise<{ emailSent: boolean }>;
+  onUpdateStatus?: (recordId: number, action: AdminRecordAction) => Promise<{ emailSent: boolean }>;
 }
 
 export const VerificationDetailModal: React.FC<VerificationDetailModalProps> = ({
@@ -48,11 +48,13 @@ export const VerificationDetailModal: React.FC<VerificationDetailModalProps> = (
   if (!record) return null;
 
   const handleAction = async (action: AdminRecordAction) => {
-    if (!onUpdateStatus || isSubmitting) return;
+    // record.recordId 選填是因為 adminMockData.ts 的展示假資料沒有真的
+    // 後端 id 可打——那種資料本來就不該讓這幾顆按鈕動作，這裡直接擋掉。
+    if (!onUpdateStatus || isSubmitting || record.recordId === undefined) return;
     setIsSubmitting(true);
     setErrorMsg(null);
     try {
-      const result = await onUpdateStatus(record.id, action);
+      const result = await onUpdateStatus(record.recordId, action);
       setFeedbackMsg(
         result.emailSent
           ? `已成功更新案件狀態：${ACTION_LABEL[action]}（通知信已寄出）`
@@ -93,6 +95,14 @@ export const VerificationDetailModal: React.FC<VerificationDetailModalProps> = (
             <h2 className="text-lg font-black text-slate-900 mt-2">
               案件身分核驗詳細報告
             </h2>
+            {/* 2026-08-30：後台還沒有影片播放/下載功能，先讓行員自己拿
+                這兩個數字去檔案系統對照 data/verification_videos/
+                {applicantId}/{recordId}.webm 找原始影片看。 */}
+            {record.recordId !== undefined && record.applicantId !== undefined && (
+              <p className="text-[11px] text-slate-400 font-mono mt-1">
+                原始影片：{record.applicantId}/{record.recordId}.webm
+              </p>
+            )}
           </div>
 
           <button
@@ -158,24 +168,16 @@ export const VerificationDetailModal: React.FC<VerificationDetailModalProps> = (
           </div>
         </div>
 
-        {/* Case Notes & Audit Overview */}
-        <div className="p-4 rounded-2xl bg-sky-50/40 border border-sky-100 space-y-2">
-          <p className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-            <FileText className="h-3.5 w-3.5 text-sky-600" />
-            風控審核備註與特徵說明
-          </p>
-          <p className="text-xs text-slate-600 leading-relaxed bg-white/80 p-3 rounded-xl border border-sky-100">
-            {record.notes || '本案身分證件與人臉活體特徵比對正常，符合金管會數位存款帳戶開戶核驗準則。'}
-          </p>
-        </div>
-
-        {/* AI 視覺複核摘要（VLM，FR-37）——只有人工複核案件才有值，刻意排
-            在「風控審核備註」之後：複核人員該先看系統判定的實際原因，
-            AI 摘要只是補充視覺線索，不是要優先看的內容。跟風控審核備註
-            分開一區、用不同底色，因為這裡是系統當下呼叫 VLM 產生的內容，
-            不是人工輸入也不是決策依據；available=false 時要清楚講
-            「目前無法使用」，不能讓複核人員誤以為是「沒有異常」。見
-            vlm_summary/README.md「已知的限制」。
+        {/* AI 視覺複核摘要（VLM，FR-37）——只有人工複核案件才有值，排在
+            「風控審核備註」之前：摘要文字結尾會引導複核人員去看下面的
+            風控審核備註（見 vlm_summary/summarizer.py 的 summary 文案，
+            2026-08-29 改成「請參考『風控審核備註與特徵說明』了解實際
+            觸發複核的原因」），這句話要「往下看」才順，所以 AI 摘要要
+            排在風控審核備註之前，不是之後（順序原本相反，被指出唸起來
+            不順才對調）。跟風控審核備註分開一區、用不同底色，因為這裡
+            是系統當下呼叫 VLM 產生的內容，不是人工輸入也不是決策依據；
+            available=false 時要清楚講「目前無法使用」，不能讓複核人員
+            誤以為是「沒有異常」。見 vlm_summary/README.md「已知的限制」。
             2026-08-29：沒找到異常的影格（observation 以「未見明顯異常」
             開頭）不顯示秒數列表——這種情況下列出「第 X 秒：未見明顯
             異常」對複核沒有幫助，只有「有話要講」的才值得列出來對應
@@ -188,7 +190,11 @@ export const VerificationDetailModal: React.FC<VerificationDetailModalProps> = (
             </p>
             {record.vlmSummary.available ? (
               <div className="space-y-2">
-                <p className="text-xs text-slate-600 leading-relaxed bg-white/80 p-3 rounded-xl border border-violet-100">
+                {/* 2026-08-30：whitespace-pre-line——summary 現在可能是
+                    「數字整合摘要 + 空行 + 畫面觀察」兩段（見
+                    vlm_summary/summarizer.py），純文字裡的 \n\n 沒有這個
+                    class 的話會被 HTML 摺疊成空白，兩段擠成一段。 */}
+                <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-line bg-white/80 p-3 rounded-xl border border-violet-100">
                   {record.vlmSummary.summary}
                 </p>
                 {(() => {
@@ -216,6 +222,17 @@ export const VerificationDetailModal: React.FC<VerificationDetailModalProps> = (
             )}
           </div>
         )}
+
+        {/* Case Notes & Audit Overview */}
+        <div className="p-4 rounded-2xl bg-sky-50/40 border border-sky-100 space-y-2">
+          <p className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+            <FileText className="h-3.5 w-3.5 text-sky-600" />
+            風控審核備註與特徵說明
+          </p>
+          <p className="text-xs text-slate-600 leading-relaxed bg-white/80 p-3 rounded-xl border border-sky-100">
+            {record.notes || '本案身分證件與人臉活體特徵比對正常，符合金管會數位存款帳戶開戶核驗準則。'}
+          </p>
+        </div>
 
         {/* Manual Review Action Form */}
         <div className="space-y-3 pt-2 border-t border-slate-100">

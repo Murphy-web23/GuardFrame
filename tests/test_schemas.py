@@ -186,6 +186,8 @@ def test_challenges_payload_parses_full_structure():
 def test_verification_record_full_assembly():
     record = schemas.VerificationRecord(
         id="VF-20260817-0001",
+        record_id=1,
+        applicant_id=1,
         timestamp="2026-08-17 10:00:00",
         applicant_name="測試用戶",
         applicant_id_masked="A12****789",

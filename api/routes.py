@@ -547,6 +547,23 @@ async def verify(
 
     quality = check_image_quality(frames)
     if not quality["passed"]:
+        # 2026-08-30：暫時診斷——不合格的暫存檔案下面會被刪掉，事後查不到
+        # 當下實際量到的數值，也沒辦法回頭看畫面本身長什麼樣子（例如
+        # S23 Ultra 前鏡頭清晰度過不了關，硬體規格不該這麼差，需要實際
+        # 打開影格看才知道是壓縮問題還是別的）。除了印數值，額外把這支
+        # 失敗的影片複製一份到 debug 資料夾（不影響原本刪除暫存檔的行為），
+        # 問題排查完這整段連同資料夾要一起拿掉，不是正式功能。
+        debug_dir = config.BASE_DIR / "data" / "debug_quality_fails"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_path = debug_dir / f"{applicant_id}_{datetime.now():%H%M%S}{suffix}"
+        shutil.copy(tmp_path, debug_path)
+        h, w = frames[0].shape[:2] if frames else (0, 0)
+        print(
+            f"[品質檢查未通過診斷] applicant={applicant_id} "
+            f"影格解析度={w}x{h} 影格數={len(frames)} "
+            f"存檔={debug_path} {quality}",
+            flush=True,
+        )
         # 不合格影片不值得象徵性保存（見下方成功路徑的說明），這裡連同
         # 暫存檔一起丟掉。CONVENTIONS 沒有明文規定
         # 這裡的狀態碼，422（Unprocessable Entity）比照「請求格式正確、
@@ -683,21 +700,81 @@ def _run_verify_analysis(
         baseline_result, synthetic_result, photometric_result, occlusion_result
     )
 
-    # VLM 摘要僅於人工複核案件觸發（FR-37）。造成 review 的不一定是
+    # VLM 摘要原本僅於人工複核案件觸發（FR-37）。造成 review 的不一定是
     # Track4——2026-08-29 以前這裡寫死只送 occlusion 的異常影格，但
     # Track1（合成偵測）、Track3（照明響應）沒過一樣會把案件推進
     # review，那種情況下只給 VLM 看 occlusion 的畫面是文不對題。改成
     # 依 fuse_decision 實際判定沒過的層，各自挑代表性畫面。
+    # 2026-08-30：拒絕案件雖然是系統自動判定、不會有行員在後台複核，
+    # 但正因為是終局結果，之後申訴／稽核追溯時反而最需要一段白話說明
+    # 「當初為什麼被拒」——這種情境下空白摘要比 review 案件更缺資訊，
+    # 所以拒絕案件現在也一併觸發。通過案件沒有異常訊號可講，維持不跑。
     vlm = None
-    if decision["verdict"] == "review":
+    if decision["verdict"] in ("review", "reject"):
+        failed = failed_layers(baseline_result, synthetic_result, photometric_result, occlusion_result)
         anomaly_frames = _collect_review_frames(
-            failed_layers(baseline_result, synthetic_result, photometric_result, occlusion_result),
-            frames=frames,
-            fps=fps,
-            phases=phases,
-            occlusion_result=occlusion_result,
+            failed, frames=frames, fps=fps, phases=phases, occlusion_result=occlusion_result,
         )
-        vlm = summarize_verification({"decision": decision}, anomaly_frames)
+        # 2026-08-30 新增：原本 VLM 只看被標記的畫面本身，沒有拿到任何
+        # 一層算出來的實際數字（例如 Track3 相關係數 0.27、門檻 0.35 差
+        # 多少），寫出來的摘要只能描述畫面好不好看，沒辦法解釋「為什麼」
+        # 系統判定可疑——這裡把各層的關鍵數字（只挑沒過的層,通過的層
+        # 不需要拿去讓 VLM 費工夫解釋）一起交給它,讓摘要能真的整合
+        # 各層證據,不是只有視覺描述。見 vlm_summary/summarizer.py
+        # synthesize_case_summary() 的說明。
+        layer_metrics = {}
+        if "baseline" in failed:
+            # 2026-08-31：原本這裡寫死「對照組動作挑戰未在時限內完成」，
+            # 不管實際是哪一項動作、為什麼沒過都套同一句話——但「沒偵測
+            # 到」不等於「沒在時限內做」，真人測試證實過（507/513/514）
+            # 揮手動作其實有在時限內做、時間點也對，只是畫面模糊讓系統
+            # 偵測不到，跟「使用者太慢」是完全不同的原因，寫死的說法會
+            # 誤導複核人員去懷疑使用者操作，而不是去懷疑偵測本身。改成
+            # 列出實際沒過的動作名稱，不臆測原因。
+            failed_challenge_names = [
+                c["name"] for c in baseline_result["challenges"] if not c["passed"]
+            ]
+            layer_metrics["baseline"] = {
+                "confidenceScore": baseline_result["confidenceScore"],
+                "note": f"未偵測到有效動作：{'、'.join(failed_challenge_names)}",
+            }
+        if "synthetic" in failed:
+            layer_metrics["synthetic"] = {
+                "fakeProbability": synthetic_result["fakeProbability"],
+                "threshold": config.SYNTHETIC_THRESHOLD,
+            }
+        if "photometric" in failed:
+            layer_metrics["photometric"] = {
+                "correlation": photometric_result["correlation"],
+                "threshold": config.PHOTO_CORRELATION_MIN,
+            }
+        if "occlusion" in failed:
+            # 2026-08-31：原本這裡不分青紅皂白地把 identityStability／
+            # maxIdentityDrop 兩個數字都塞給 VLM——但 occlusion 的
+            # detected 是三項判定（揮手循環數／身分連續性／遮擋區域
+            # 顏色）全部要過才算數，只要「揮手循環不足 2 次」這一項沒過，
+            # occlusion 整層就會被列進 failed，即使身分穩定度／最大掉幅
+            # 兩個數字其實都在門檻內（真人測試撞到過：VLM 因此瞎掰出
+            # 「身分穩定度和最大單次掉幅都超過門檻」，但那兩個數字根本
+            # 沒過門檻，是揮手循環數不夠）。改成只回報三項判定裡「真的
+            # 沒過」的那幾項，讓 VLM 不會拿通過的數字亂編故事。
+            occ_checks = occlusion_result["checks"]
+            occ_metrics: dict = {}
+            if not occ_checks[0]["passed"]:
+                occ_metrics["waveCyclesDetected"] = occlusion_result["waveCyclesDetected"]
+                occ_metrics["waveCyclesRequired"] = 2
+            if not occ_checks[1]["passed"]:
+                occ_metrics["identityStability"] = occlusion_result["identityStability"]
+                occ_metrics["identityStabilityThreshold"] = config.OCC_IDENTITY_STABILITY_MIN
+                occ_metrics["maxIdentityDrop"] = occlusion_result["maxIdentityDrop"]
+                occ_metrics["maxIdentityDropThreshold"] = config.OCC_MAX_DROP_THRESHOLD
+            if not occ_checks[2]["passed"]:
+                occ_metrics["layerScore"] = occlusion_result["layerScore"]
+                occ_metrics["layerScoreThreshold"] = config.OCC_LAYER_SCORE_MIN
+            layer_metrics["occlusion"] = occ_metrics
+        vlm = summarize_verification(
+            {"decision": decision, "layerMetrics": layer_metrics}, anomaly_frames
+        )
 
     account_result = _ACCOUNT_RESULT_BY_VERDICT[decision["verdict"]]
     now = datetime.now()
@@ -911,6 +988,8 @@ def _row_to_record_dict(row: VerificationRecordRow) -> dict:
     phases = row.phases
     return {
         "id": f"VF-{row.timestamp:%Y%m%d}-{row.id:04d}",
+        "recordId": row.id,
+        "applicantId": row.applicant_id,
         "timestamp": row.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
         "applicantName": applicant.name,
         "applicantIdMasked": applicant.id_number_masked,

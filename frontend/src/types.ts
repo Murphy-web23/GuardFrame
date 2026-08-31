@@ -125,6 +125,16 @@ export type HandlingStatus =
 
 export interface VerificationRecord {
   id: string;
+  // 2026-08-30：純數字的資料庫 id，給「發送補件通知／通知前往實體分行／
+  // 確認核准通過」這三個動作打後端用——id 是格式化過的顯示字串，不能
+  // 拿去當路徑參數，見 api/client.ts BackendVerificationRecord 的說明。
+  // 選填理由跟 riskScore 一樣：adminMockData.ts 的假資料沒有對應的
+  // 後端數字 id 可以填。
+  recordId?: number;
+  // 2026-08-30：跟 recordId 搭配，用來對照 data/verification_videos/
+  // {applicantId}/{recordId}.webm 這個實際存檔路徑，讓後台複核人員
+  // 自己去檔案系統找原始影片看，見 VerificationDetailModal.tsx。
+  applicantId?: number;
   applicantName: string;
   idNumberMasked: string;
   timestamp: string;

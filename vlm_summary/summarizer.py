@@ -93,6 +93,117 @@ def _encode_jpeg(frame) -> str:
     return base64.b64encode(buf).decode("ascii")
 
 
+# 2026-08-30 新增：中文欄位名稱對照，組文字提示詞用（不是給程式判斷邏輯
+# 用的鍵名，只是把 layerMetrics 的內容講成人看得懂的句子）。
+_LAYER_LABELS = {
+    "baseline": "對照組動作挑戰",
+    "synthetic": "Track1 合成偵測",
+    "photometric": "Track3 照明響應",
+    "occlusion": "Track4 遮擋/換臉偵測",
+}
+
+
+def _format_layer_metrics(layer_metrics: dict) -> str:
+    """把 api/routes.py 傳來的 layerMetrics 轉成一段給 LLM 讀的中文描述。
+
+    只包含沒通過的層（呼叫端已經先篩過），每層列出實際量到的數值跟
+    對應門檻，讓 LLM 有具體數字可以引用，而不是只能講「這層沒過」這種
+    空話。
+    """
+    lines = []
+    for key, metrics in layer_metrics.items():
+        label = _LAYER_LABELS.get(key, key)
+        if key == "baseline":
+            lines.append(f"- {label}：信心分數 {metrics['confidenceScore']:.2f}（{metrics['note']}）")
+        elif key == "synthetic":
+            lines.append(
+                f"- {label}：AI 生成機率 {metrics['fakeProbability']:.2f}"
+                f"（門檻 {metrics['threshold']:.2f}，數值越高越可疑）"
+            )
+        elif key == "photometric":
+            lines.append(
+                f"- {label}：反光相關係數 {metrics['correlation']:.2f}"
+                f"（門檻 {metrics['threshold']:.2f}，數值越低代表反光跟螢幕變色越不同步）"
+            )
+        elif key == "occlusion":
+            # 2026-08-31：occlusion 是「揮手循環數／身分連續性／遮擋區域
+            # 顏色」三項判定，只要其中一項沒過整層就算沒過——這裡只列出
+            # 實際沒過的那幾項，其餘通過的數字不列，避免 LLM 把通過的
+            # 數字誤讀成沒過（真人測試撞到過：明明身分穩定度/最大掉幅都
+            # 在門檻內，只有揮手循環數不夠，VLM 卻寫成兩個都超標）。
+            parts = []
+            if "waveCyclesDetected" in metrics:
+                parts.append(
+                    f"揮手循環偵測到 {metrics['waveCyclesDetected']} 次"
+                    f"（至少需要 {metrics['waveCyclesRequired']} 次）"
+                )
+            if "identityStability" in metrics:
+                parts.append(
+                    f"身分穩定度 {metrics['identityStability']:.2f}"
+                    f"（門檻 {metrics['identityStabilityThreshold']:.2f}）"
+                )
+                parts.append(
+                    f"最大單次掉幅 {metrics['maxIdentityDrop']:.2f}"
+                    f"（門檻 {metrics['maxIdentityDropThreshold']:.2f}，"
+                    "數值越高代表遮擋前後的臉部特徵差異越大，越像換了一張臉）"
+                )
+            if "layerScore" in metrics:
+                parts.append(
+                    f"遮擋區域顏色相似度 {metrics['layerScore']:.2f}"
+                    f"（門檻 {metrics['layerScoreThreshold']:.2f}，"
+                    "數值太低代表遮擋區域顏色不像臉，可能是換臉管線斷裂的破綻）"
+                )
+            lines.append(f"- {label}：" + "；".join(parts))
+    return "\n".join(lines)
+
+
+_CASE_SUMMARY_PROMPT_TEMPLATE = (
+    "你是身分驗證系統的複核助手。以下是這筆案件沒有通過的檢查層，"
+    "附上各層實際量到的數值跟門檻：\n\n{metrics}\n\n"
+    "請用不超過 80 個字的白話文，跟銀行風控人員解釋這筆案件為什麼需要"
+    "人工複核、具體是哪裡看起來可疑（引用上面的數字），不要逐條複誦，"
+    "整合成一段連貫的說明。不要做出通過或拒絕的建議，你只負責解釋現有"
+    "證據，最終判定由人員決定。"
+)
+
+
+def _ask_vlm_text(prompt: str) -> str:
+    """跟 _ask_vlm() 一樣打 Ollama，但不帶圖片——純文字整合各層數字用，
+    見 synthesize_case_summary()。沒有圖要編碼，這支通常比帶圖的
+    _ask_vlm() 快很多。"""
+    response = requests.post(
+        OLLAMA_URL,
+        json={"model": VLM_MODEL, "prompt": prompt, "stream": False},
+        timeout=300,
+    )
+    response.raise_for_status()
+    return response.json().get("response", "").strip()
+
+
+def synthesize_case_summary(layer_metrics: dict) -> str | None:
+    """把各層沒通過的實際數字交給 VLM，整合成一段給複核人員看的白話說明。
+
+    2026-08-30 新增——原本 summarize_verification() 只讓 VLM 看被標記的
+    畫面本身，寫出來的摘要只能描述「畫面好不好看」，沒辦法解釋「系統
+    為什麼覺得可疑」（那個理由多半藏在數字裡，例如 Track3 相關係數
+    0.27 距離門檻 0.35 差多少，不是肉眼看畫面能看出來的）。這支函式
+    才是真正做到「把已經算出來的證據轉成人話」——之前 PROMPTS 那幾句
+    做的是「看這張圖有沒有異常」，這支做的是「看這些數字，用白話解釋」，
+    兩者互補，不是同一件事。
+
+    找不到任何 layer_metrics（理論上不會發生，review 案件一定至少有一層
+    沒過）或推論失敗時回傳 None，呼叫端要自己處理「這段沒有」的情況，
+    不拋例外——這只是複核時的輔助說明。
+    """
+    if not layer_metrics:
+        return None
+    try:
+        prompt = _CASE_SUMMARY_PROMPT_TEMPLATE.format(metrics=_format_layer_metrics(layer_metrics))
+        return _ask_vlm_text(prompt)
+    except Exception:
+        return None
+
+
 def _ask_vlm(image_b64: str, source: str) -> str:
     # 2026-08-29：開發機沒有獨立顯卡，CPU 推論一張圖實測要好幾分鐘
     # （尤其系統同時開著很多其他程式、記憶體吃緊的時候）。/verify 本身
@@ -113,8 +224,10 @@ def summarize_verification(record: dict, anomaly_frames: list) -> dict:
     """對異常影格逐一詢問地端 VLM，產生給複核人員看的說明。
 
     參數:
-        record: dict，目前只用 record["decision"]，保留給以後想讓 VLM
-            知道整體判定脈絡（例如哪幾層被扣分）時擴充用，目前版本沒用到。
+        record: dict，用 record["layerMetrics"]（見 api/routes.py，
+            只包含沒通過的層跟各自的實際數值/門檻）整合成一段白話摘要，
+            見 synthesize_case_summary()。record["decision"] 目前沒用到，
+            保留給以後需要判定脈絡（riskScore/reasons 等）時擴充。
         anomaly_frames: list[dict]，每個元素是
             {"image": np.ndarray（RGB），"timestampSec": float, "source": str}
             source 是哪一層送來的這張畫面（"occlusion"/"synthetic"/
@@ -132,16 +245,31 @@ def summarize_verification(record: dict, anomaly_frames: list) -> dict:
             "latencyMs": float,
         }
     """
+    t0 = time.time()
+
+    # 2026-08-30：先做數字整合摘要（見 synthesize_case_summary()），不管
+    # 有沒有異常影格都能跑——只需要各層的數值，不需要畫面。這段解釋的是
+    # 「系統為什麼覺得可疑」，跟下面的畫面觀察（解釋「畫面上看不看得
+    # 出來」）是互補的兩件事，不是同一句話的兩種寫法。
+    case_summary = synthesize_case_summary(record.get("layerMetrics") or {})
+
     if not anomaly_frames:
+        if case_summary is None:
+            return {
+                "available": False,
+                "frameObservations": [],
+                "summary": "",
+                "model": "",
+                "latencyMs": 0.0,
+            }
         return {
-            "available": False,
+            "available": True,
             "frameObservations": [],
-            "summary": "",
-            "model": "",
-            "latencyMs": 0.0,
+            "summary": case_summary,
+            "model": VLM_MODEL,
+            "latencyMs": (time.time() - t0) * 1000.0,
         }
 
-    t0 = time.time()
     observations = []
     try:
         for item in _sample(anomaly_frames):
@@ -151,10 +279,14 @@ def summarize_verification(record: dict, anomaly_frames: list) -> dict:
                 {"timestampSec": round(float(item["timestampSec"]), 1), "observation": text}
             )
     except Exception as exc:
+        # 2026-08-30：畫面觀察這段失敗了，但數字整合摘要可能還是有算出來
+        # ——兩段是各自獨立呼叫 VLM 的，一段失敗不該連累另一段，能給多少
+        # 就給多少，不要因小失大整段判定 available=False。
+        fallback = case_summary or f"地端 VLM 目前無法使用（{exc}），請直接查看異常影格。"
         return {
-            "available": False,
+            "available": case_summary is not None,
             "frameObservations": [],
-            "summary": f"地端 VLM 目前無法使用（{exc}），請直接查看異常影格。",
+            "summary": fallback,
             "model": VLM_MODEL,
             "latencyMs": (time.time() - t0) * 1000.0,
         }
@@ -165,28 +297,26 @@ def summarize_verification(record: dict, anomaly_frames: list) -> dict:
     # 異常」原句複誦出來——聽起來像是在否定系統本來的判定，容易誤導
     # 複核人員以為這格畫面沒問題、可以放行，但這幾格會被送來給 VLM 看，
     # 正是因為某一層的演算法已經判定它可疑（見 api/routes.py
-    # _collect_review_frames()）。改用「開頭是不是這句話」判斷，並且
-    # 不管有沒有找到東西，摘要都明講「這是 VLM 的視覺檢視結果，不是
-    # 對系統判定的背書或推翻」，兩種情況都不該讓複核人員誤會。
+    # _collect_review_frames()）。改用「開頭是不是這句話」判斷。
     flagged = [
         o for o in observations if not o["observation"].strip().startswith("未見明顯異常")
     ]
-    if flagged:
-        summary = (
-            "VLM 視覺檢視發現："
-            + "、".join(f"第 {o['timestampSec']} 秒：{o['observation']}" for o in flagged)
+    frame_note = (
+        "VLM 視覺檢視發現："
+        + "、".join(f"第 {o['timestampSec']} 秒：{o['observation']}" for o in flagged)
+        if flagged
+        else (
+            "VLM 視覺檢視這幾格系統標記的畫面，未看出明顯視覺瑕疵——肉眼／VLM "
+            "看不出異常不代表判定有誤（有些異常本來就不是視覺層面的問題）。"
         )
-    else:
-        # 2026-08-29：原本結尾寫「仍應以觸發複核的原始數據為準」，講得太
-        # 抽象——複核人員該去哪裡找那個「原始數據」？改成直接點名畫面上
-        # 那個區塊的名稱（「風控審核備註與特徵說明」），複核人員看完這句
-        # 話能直接知道下一步該看哪裡，不用自己猜。
-        summary = (
-            "VLM 視覺檢視這幾格系統標記的畫面，未看出明顯視覺瑕疵——但這些畫面"
-            "會被送來複核，是因為系統已經判定它們可疑，肉眼／VLM 看不出異常"
-            "不代表判定有誤（有些異常本來就不是視覺層面的問題），請參考下方"
-            "「風控審核備註與特徵說明」了解實際觸發複核的原因。"
-        )
+    )
+
+    # 2026-08-30：數字整合摘要（案件為什麼可疑）放前面、畫面觀察結果
+    # （畫面上看不看得出來）放後面——複核人員該先知道「為什麼」，畫面
+    # 描述是補充細節，不是主要結論。case_summary 算不出來時（例如
+    # layerMetrics 是空的，理論上 review 案件不該發生，或這段呼叫失敗）
+    # 就只顯示畫面觀察，不留一段空白開頭。
+    summary = f"{case_summary}\n\n{frame_note}" if case_summary else frame_note
 
     return {
         "available": True,

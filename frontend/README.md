@@ -1,20 +1,24 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# GuardFrame Frontend
 
-# Run and deploy your AI Studio app
+GuardFrame 的申請人端六步驟開戶流程與後台審核儀表板。React 19 + Vite + TypeScript + Tailwind CSS。
 
-This contains everything you need to run your app locally.
+專案整體背景與完整規格見[根目錄 README](../README.md)。
 
-View your app in AI Studio: https://ai.studio/apps/212d15c1-feae-4d91-be64-b24b4a02c7c6
+## 執行
 
-## Run Locally
+**環境需求**：Node.js
 
-**Prerequisites:**  Node.js
+```bash
+npm install
+npm run dev
+```
 
+預設連線到後端 `http://localhost:8000`，可用 `VITE_API_BASE_URL` 環境變數覆蓋。
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## 其他指令
+
+```bash
+npm run build   # 產生正式版靜態檔案
+npm run preview # 預覽 build 結果
+npm run lint    # TypeScript 型別檢查（tsc --noEmit）
+```
