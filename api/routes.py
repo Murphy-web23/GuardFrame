@@ -32,7 +32,7 @@ from api.models import AdminCredential, Applicant, VerificationRecordRow
 from baseline_challenge.analyzer import analyze_baseline
 from common.face_utils import extract_frames
 from common.fusion import failed_layers, fuse_decision
-from notifications import send_review_action_email, send_verdict_email
+from notifications import send_review_action_email, send_verdict_email, send_wave_retry_email
 from common.schemas import (
     AccountSetupRequest,
     AccountSetupResponse,
@@ -659,6 +659,41 @@ _background_tasks: set[asyncio.Task] = set()
 _verify_analysis_semaphore = asyncio.Semaphore(1)
 
 
+def _wave_retry_eligible(baseline_result, synthetic_result, photometric_result, occlusion_result) -> bool:
+    """判斷這筆案件是不是「純粹卡在揮手動作」，可以提供補錄機會。
+
+    2026-09-01 新增：真人測試證實 Chrome 手機錄影動態模糊會讓 Track4
+    揮手循環偵測整段判定失敗（見當天對話紀錄），而且產生的數據型態
+    跟真的攻擊很像，沒辦法只靠調整偵測邏輯區分——調低門檻、CLAHE
+    前處理都實測會削弱防偽能力。折衷方案：只有在「其餘判定都正常，
+    唯獨揮手這一項沒過」時才提供補錄，任何其他層有問題都不提供（避免
+    誤導使用者以為重錄一定救得回來，也不讓真的有問題的案件多一次
+    嘗試機會）。
+
+    條件（缺一不可）：
+        - baseline 四項動作挑戰裡，只有 wave_hand 沒過，其餘都過
+        - Track4 三項判定裡，只有「揮手循環數」這項沒過，身分連續性、
+          遮擋區域顏色都過（見 track4_occlusion/analyzer.py CHECK_LABELS
+          固定順序：index 0 是循環數、1 是身分連續性、2 是遮擋顏色）
+        - Track1、Track3 都通過
+    """
+    baseline_failed = [c["action"] for c in baseline_result["challenges"] if not c["passed"]]
+    if baseline_failed != ["wave_hand"]:
+        return False
+
+    occ_checks = occlusion_result["checks"]
+    if occ_checks[0]["passed"] or not occ_checks[1]["passed"] or not occ_checks[2]["passed"]:
+        return False
+
+    if synthetic_result["fakeProbability"] >= config.SYNTHETIC_THRESHOLD:
+        return False
+
+    if not photometric_result["detected"]:
+        return False
+
+    return True
+
+
 def _run_verify_analysis(
     applicant_id, tmp_path, suffix, source_type, frames, fps, phases, challenge_dicts,
     light_log_dict, quality,
@@ -698,6 +733,21 @@ def _run_verify_analysis(
 
     decision = fuse_decision(
         baseline_result, synthetic_result, photometric_result, occlusion_result
+    )
+
+    # 2026-09-01 新增：揮手動作補錄機制，見 _wave_retry_eligible() 的
+    # 說明。只有 review 案件才需要——pass 案件不需要補救，reject 案件
+    # 代表除了揮手還有其他更嚴重的問題（_wave_retry_eligible 本身也會
+    # 檔掉這種情況，這裡的 verdict 檢查是雙重保險，避免未來改動判斷式
+    # 時不小心讓 reject 案件也拿到補錄機會）。
+    wave_retry_eligible = (
+        decision["verdict"] == "review"
+        and _wave_retry_eligible(baseline_result, synthetic_result, photometric_result, occlusion_result)
+    )
+    wave_retry_token = secrets.token_urlsafe(config.SESSION_TOKEN_BYTES) if wave_retry_eligible else None
+    wave_retry_token_expires_at = (
+        datetime.now() + timedelta(hours=config.WAVE_RETRY_TOKEN_EXPIRY_HOURS)
+        if wave_retry_eligible else None
     )
 
     # VLM 摘要原本僅於人工複核案件觸發（FR-37）。造成 review 的不一定是
@@ -846,6 +896,8 @@ def _run_verify_analysis(
         vlm_summary=vlm["summary"] if vlm else None,
         vlm_model=vlm["model"] if vlm else None,
         vlm_latency_ms=vlm["latencyMs"] if vlm else None,
+        wave_retry_token=wave_retry_token,
+        wave_retry_token_expires_at=wave_retry_token_expires_at,
     )
     try:
         db.add(row)
@@ -870,6 +922,13 @@ def _run_verify_analysis(
         # 處理（見 notifications.py 開頭說明）。寄信失敗不影響驗證結果
         # 已經寫入資料庫這件事，send_verdict_email() 內部已經吞掉例外。
         send_verdict_email(applicant.email, applicant.name, decision["verdict"], record_id=row.id)
+
+        # 揮手補錄邀請信，見上面 wave_retry_eligible 的說明。跟上面
+        # send_verdict_email() 一樣，這裡失敗不影響驗證結果已經寫入
+        # 資料庫這件事，send_wave_retry_email() 內部已經吞掉例外。
+        if wave_retry_eligible:
+            retry_url = f"{config.FRONTEND_BASE_URL}/retry-wave?token={wave_retry_token}"
+            send_wave_retry_email(applicant.email, applicant.name, retry_url, record_id=row.id)
     finally:
         db.close()
 
@@ -911,6 +970,134 @@ def get_verify_result(
 
     record = VerificationRecord.model_validate(_row_to_record_dict(latest))
     return {"status": "done", "record": record.model_dump(by_alias=True)}
+
+
+def _get_wave_retry_row(token: str, db: Session) -> VerificationRecordRow:
+    """兩支 /verify-retry 端點共用的 token 驗證邏輯。
+
+    2026-09-01 新增：這個 token 不是 X-Session-Id 那套機制（見
+    _require_session()）——申請人補錄揮手動作時，原本的 session 很可能
+    已經過期或分頁已經關掉，改用寄在 email 連結裡的獨立 token，直接查
+    verification_records 表比對，不需要申請人重新走一次簡訊驗證。
+    """
+    row = db.query(VerificationRecordRow).filter_by(wave_retry_token=token).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="重錄連結無效")
+    if row.wave_retry_used:
+        raise HTTPException(status_code=410, detail="這個連結已經使用過")
+    if row.wave_retry_token_expires_at is None or datetime.now() > row.wave_retry_token_expires_at:
+        raise HTTPException(status_code=410, detail="重錄連結已過期，請重新申請開戶")
+    return row
+
+
+@router.get("/verify-retry/{token}")
+def get_wave_retry_info(token: str, db: Session = Depends(get_db)):
+    """揮手補錄頁面載入時先打這支，確認連結還有效，順便拿申請人姓名
+    顯示在畫面上（不回傳其他個資）。"""
+    row = _get_wave_retry_row(token, db)
+    return {"applicantName": row.applicant.name}
+
+
+@router.post("/verify-retry/{token}")
+async def submit_wave_retry(token: str, video: UploadFile = File(...), db: Session = Depends(get_db)):
+    """接收補錄的揮手影片，只重跑 baseline 的揮手挑戰跟 Track4 遮擋分析
+    這兩項，Track1／Track3 沿用原本紀錄的結果不重算（那兩層跟揮手動作
+    無關，見 _wave_retry_eligible() 的資格條件——會走到這支端點的案件，
+    這兩層本來就已經通過）。
+
+    跟 verify() 的差異：這裡不做非同步背景處理，因為只重跑兩個相對
+    輕量的判定（不含 InsightFace 全臉分析），實測秒級可以跑完，同步
+    回應即可，不需要再輪詢一次。
+    """
+    row = _get_wave_retry_row(token, db)
+
+    suffix = Path(video.filename or "video.webm").suffix or ".webm"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        video_bytes = await video.read()
+        tmp.write(video_bytes)
+        tmp_path = tmp.name
+
+    try:
+        frames, fps = extract_frames(tmp_path)
+    except (FileNotFoundError, ValueError) as exc:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    def _rerun_wave_checks():
+        # 補錄影片整支就是揮手動作本身（沒有其他挑戰混在裡面），不用
+        # 像 verify() 那樣切 phases，直接把整支影片丟給這兩個函式。
+        retry_baseline = analyze_baseline(
+            frames, fps, [{"action": "wave_hand", "name": "臉前揮手", "durationSec": 7}]
+        )
+        retry_occlusion = analyze_occlusion(frames, fps)
+        return retry_baseline, retry_occlusion
+
+    retry_baseline, retry_occlusion = await run_in_threadpool(_rerun_wave_checks)
+
+    # 用新的揮手結果覆蓋原本 baseline_challenges 裡對應的那一項，其餘
+    # 三項（眨眼/左轉/右轉，原本就已經過）維持不動，才能正確算出四項
+    # 挑戰的失敗比例（confidenceScore），不是只看這一項。
+    merged_challenges = [
+        retry_baseline["challenges"][0] if c["action"] == "wave_hand" else c
+        for c in row.baseline_challenges
+    ]
+    failed_count = sum(1 for c in merged_challenges if not c["passed"])
+    new_baseline_result = {
+        "challenges": merged_challenges,
+        "verdict": "pass" if failed_count == 0 else "reject",
+        "confidenceScore": failed_count / len(merged_challenges),
+    }
+
+    # Track1/Track3 沿用原始紀錄，不重跑——用資料庫既有欄位重建
+    # fuse_decision() 需要的最小欄位形狀。
+    synthetic_result = {"fakeProbability": float(row.synthetic_fake_probability)}
+    photometric_result = {
+        "detected": row.photo_detected,
+        "confidenceScore": float(row.photo_confidence_score),
+    }
+
+    decision = fuse_decision(new_baseline_result, synthetic_result, photometric_result, retry_occlusion)
+
+    original_risk_score = row.risk_score
+    original_verdict = row.verdict
+
+    row.baseline_challenges = merged_challenges
+    row.baseline_verdict = new_baseline_result["verdict"]
+    row.baseline_confidence_score = new_baseline_result["confidenceScore"]
+    row.occ_detected = retry_occlusion["detected"]
+    row.occ_wave_cycles = retry_occlusion["waveCyclesDetected"]
+    row.occ_identity_stability = retry_occlusion["identityStability"]
+    row.occ_max_identity_drop = retry_occlusion["maxIdentityDrop"]
+    row.occ_segments = retry_occlusion["occlusionSegments"]
+    row.occ_layer_score = retry_occlusion["layerScore"]
+    row.occ_anomaly_frames = retry_occlusion["anomalyFrames"]
+    row.occ_checks = retry_occlusion["checks"]
+    row.occ_stability_curve = retry_occlusion["stabilityCurve"]
+    row.occ_confidence_score = retry_occlusion["confidenceScore"]
+    row.risk_score = decision["riskScore"]
+    row.verdict = decision["verdict"]
+    row.verdict_label = decision["verdictLabel"]
+    row.reasons = decision["reasons"]
+    row.wave_retry_used = True
+    row.wave_retry_original_risk_score = original_risk_score
+    row.wave_retry_original_verdict = original_verdict
+
+    video_dir = config.VERIFICATION_VIDEO_DIR / str(row.applicant_id)
+    video_dir.mkdir(parents=True, exist_ok=True)
+    retry_video_path = video_dir / f"{row.id}_retry{suffix}"
+    shutil.move(tmp_path, retry_video_path)
+    row.wave_retry_video_path = str(retry_video_path.relative_to(config.BASE_DIR))
+
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+
+    # 跟 verify() 裡的邏輯一致：send_verdict_email() 只認 pass/reject，
+    # 補錄後仍然是 review 的話會直接略過，不用另外判斷。
+    applicant = db.get(Applicant, row.applicant_id)
+    send_verdict_email(applicant.email, applicant.name, decision["verdict"], record_id=row.id)
+
+    return {"verdict": decision["verdict"], "riskScore": decision["riskScore"]}
 
 
 @router.post("/applicants/{applicant_id}/account-setup", response_model=AccountSetupResponse)

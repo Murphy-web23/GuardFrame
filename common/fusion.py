@@ -177,6 +177,17 @@ def fuse_decision(baseline, synthetic, photometric, occlusion) -> dict:
     verdict = compute_verdict(risk_score)
     reasons = build_reasons(baseline, synthetic, photometric, occlusion)
 
+    # 2026-09-01：baseline reject 時，加權後的風險分數不可信任到可以
+    # 直接「通過」——baseline 權重刻意調低（弱證據，容易被照著指示演
+    # 的假影片滿足），但這也連帶稀釋了「沒通過」這個訊號本身。真人
+    # 測試中 applicant 1602（確認為虛擬攝影機）就是這樣以 risk=27
+    # 直接通過。這裡不改 risk_score（保留原始數字供稽核），也不改
+    # WEIGHT_BASELINE（影響面較大、難預測），只在這個特定組合上把
+    # 判定升級成 review，不強制 reject——不確定是不是攻擊時，不該
+    # 自動拒絕真人（見 applicant 1601 這種真人動作挑戰失敗案例）。
+    if not _layer_passed("baseline", baseline) and verdict == "pass":
+        verdict = "review"
+
     return {
         "riskScore": risk_score,
         "verdict": verdict,

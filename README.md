@@ -71,6 +71,7 @@ venv\Scripts\python.exe scripts\init_admin.py
 | `models/hand_landmarker.task` | 7.5 MB | MediaPipe 手部關鍵點（Track 4） | 網址見 `config.MEDIAPIPE_HAND_MODEL_URL` |
 | InsightFace `buffalo_l` | ~300 MB | 人臉偵測與身分嵌入 | 首次呼叫時自動下載至 `~/.insightface` |
 | Ollama `qwen2.5vl:3b` | — | 人工複核 VLM 摘要 | 需先裝 [Ollama](https://ollama.com)，執行 `ollama pull qwen2.5vl:3b` |
+| `id_card_detector/weights/best.pt` | ~5.4 MB | 證件角點偵測（YOLO11n-pose） | 沒有這個檔案時會自動退回古典 CV 方法（`image_utils/id_card.py` 的 fallback 機制），不影響整條 pipeline 能不能跑，但矯正效果較差——demo/正式使用前務必跟原始訓練者索取這個檔案 |
 
 啟動後端：
 

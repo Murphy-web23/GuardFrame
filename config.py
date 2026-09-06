@@ -42,10 +42,16 @@ VIDEO_SECONDS_MAX = 45  # 避免檔案過大與使用者疲乏
 # 2026-08-28：從 1.0 收回到 50——1.0 等同完全關掉這道檢查，50 同樣還是
 # 能讓 OBS 假影片（最高 81.64）通過以便繼續測試 Track2-4，但至少不是
 # 形同虛設的數字。仍是暫時值，驗證告一段落後請改回 70.0。
-QUALITY_BLUR_MIN = 50
-QUALITY_BRIGHTNESS_MIN = 45
-QUALITY_BRIGHTNESS_MAX = 200
-QUALITY_FACE_RATIO_MIN = 0.10
+# 2026-08-31：B 要求暫時調低整組人臉驗證影片品質閘門以便測試，
+# 測完務必改回下面註解掉的原參數：
+#     QUALITY_BLUR_MIN = 50
+#     QUALITY_BRIGHTNESS_MIN = 45
+#     QUALITY_BRIGHTNESS_MAX = 200
+#     QUALITY_FACE_RATIO_MIN = 0.10
+QUALITY_BLUR_MIN = 5
+QUALITY_BRIGHTNESS_MIN = 15
+QUALITY_BRIGHTNESS_MAX = 245
+QUALITY_FACE_RATIO_MIN = 0.03
 
 # Track 1
 SYNTHETIC_THRESHOLD = 0.50
@@ -234,8 +240,10 @@ RPPG_MIN_FRAMES = 64  # 少於此格數無法做出可信的頻譜
 
 # 品質檢查｜§8 只給了模糊、亮度、臉部佔比的門檻，
 # 但 §4.7 的回傳值還有對比度與過曝比例，補上對應門檻。
-QUALITY_CONTRAST_MIN = 20.0  # 灰階標準差，過低代表畫面死白或死黑
-QUALITY_OVEREXPOSED_MAX = 0.15  # 過曝像素比例上限
+# 2026-08-31：跟上面 QUALITY_BLUR_MIN 等同一輪測試，暫時調低，
+# 原參數：QUALITY_CONTRAST_MIN = 20.0 / QUALITY_OVEREXPOSED_MAX = 0.15
+QUALITY_CONTRAST_MIN = 5.0  # 灰階標準差，過低代表畫面死白或死黑
+QUALITY_OVEREXPOSED_MAX = 0.40  # 過曝像素比例上限
 QUALITY_OVEREXPOSED_LEVEL = 250  # 灰階值 >= 此值視為過曝
 
 # 證件矯正｜Canny + 透視變換參數
@@ -413,6 +421,15 @@ SMS_MAX_ATTEMPTS = 3  # §5.5：連續錯誤 3 次需重新發送
 # 只規定要設定「建議值」，見 §4.9 實作要點）
 # --------------------------------------------------------------------------
 ADMIN_TOKEN_HOURS = 8  # 一個工作班次的長度，過期需重新登入，沒有文獻依據
+
+# --------------------------------------------------------------------------
+# 2026-09-01 新增：揮手動作重錄機制。Chrome 手機錄影動態模糊導致 Track4
+# 揮手循環偵測失敗，真人測試證實這個問題跟真的換臉/遮擋攻擊產生的數據
+# 型態很像，沒辦法只靠調整偵測邏輯區分兩者（調低門檻/CLAHE前處理都會
+# 削弱防偽能力，見當天對話紀錄），改成讓「只卡在揮手這一項」的案件
+# 有機會補錄一次，見 api/routes.py _wave_retry_eligible()。
+# --------------------------------------------------------------------------
+WAVE_RETRY_TOKEN_EXPIRY_HOURS = 24  # 比照 ADMIN_TOKEN_HOURS 的邏輯，給合理但不過長的時窗
 
 # --------------------------------------------------------------------------
 # §5.3 對照組動作挑戰：固定時長，只有出現順序隨機

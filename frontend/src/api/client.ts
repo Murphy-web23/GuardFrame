@@ -282,6 +282,39 @@ export async function waitForVerifyResult(
 }
 
 // --------------------------------------------------------------------------
+// 揮手動作補錄（2026-09-01 新增）
+//
+// 用的是 email 連結裡帶的獨立 token，不是 X-Session-Id——申請人補錄時
+// 原本的 session 很可能已經過期或分頁已經關掉，見 api/routes.py
+// _get_wave_retry_row() 的說明。
+// --------------------------------------------------------------------------
+
+export interface WaveRetryInfo {
+  applicantName: string;
+}
+
+export async function getWaveRetryInfo(token: string): Promise<WaveRetryInfo> {
+  return request(`/api/verify-retry/${encodeURIComponent(token)}`, {
+    method: 'GET',
+  });
+}
+
+export interface WaveRetryResult {
+  verdict: 'pass' | 'review' | 'reject';
+  riskScore: number;
+}
+
+export async function submitWaveRetry(token: string, video: Blob): Promise<WaveRetryResult> {
+  const form = new FormData();
+  const ext = video.type.includes('mp4') ? 'mp4' : 'webm';
+  form.append('video', video, `wave_retry.${ext}`);
+  return request(`/api/verify-retry/${encodeURIComponent(token)}`, {
+    method: 'POST',
+    body: form,
+  });
+}
+
+// --------------------------------------------------------------------------
 // 後台認證與查詢
 // --------------------------------------------------------------------------
 

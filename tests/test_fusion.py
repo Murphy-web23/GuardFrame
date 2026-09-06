@@ -256,3 +256,38 @@ def test_fuse_decision_verdict_label_matches_verdict():
         BASELINE_FAIL, SYNTHETIC_LOW, PHOTO_PASS, OCC_PASS
     )
     assert decision["verdictLabel"] == fusion.VERDICT_LABELS[decision["verdict"]]
+
+
+def test_fuse_decision_baseline_reject_never_passes_outright():
+    """2026-09-01：applicant 1602（確認為虛擬攝影機）baseline reject 但
+    其餘三層都乾淨，加權後 risk_score=27（落在 pass 區間）直接通過。
+    baseline 權重刻意調低，稀釋了「沒通過」這個訊號，risk_score 本身
+    不足以信任到可以直接放行——這裡驗證 floor 規則把它升級成 review，
+    不是 pass，也不是強制 reject（見下面的 does_not_escalate 測試，
+    真人動作挑戰失敗不該被自動升級成拒絕）。
+    """
+    decision = fusion.fuse_decision(
+        BASELINE_FAIL, SYNTHETIC_LOW, PHOTO_PASS, OCC_PASS
+    )
+    assert decision["riskScore"] <= config.RISK_PASS_MAX
+    assert decision["verdict"] == "review"
+    assert fusion._FAILURE_REASONS["baseline"] in decision["reasons"]
+
+
+def test_fuse_decision_baseline_reject_floor_does_not_escalate_existing_reject():
+    """baseline reject 加上其他層也失敗、risk_score 本來就落在 reject
+    區間時，floor 規則不該把它從 reject 降級成 review——這條規則只
+    negative-side 補洞（防止直接通過），不該反過來放寬本來就該拒絕
+    的案件。"""
+    decision = fusion.fuse_decision(
+        BASELINE_FAIL, SYNTHETIC_HIGH, PHOTO_FAIL, OCC_FAIL
+    )
+    assert decision["riskScore"] > config.RISK_REVIEW_MAX
+    assert decision["verdict"] == "reject"
+
+
+def test_fuse_decision_baseline_pass_is_unaffected_by_floor():
+    """baseline 本身通過時，floor 規則不該介入，維持原本的風險分數
+    區間判定。"""
+    decision = fusion.fuse_decision(BASELINE_PASS, SYNTHETIC_ZERO, PHOTO_PASS, OCC_PASS)
+    assert decision["verdict"] == "pass"
