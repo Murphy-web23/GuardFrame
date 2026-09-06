@@ -330,7 +330,7 @@ export const DesktopIdUpload: React.FC<DesktopIdUploadProps> = ({
         {rectifyStatus === 'capturing' && (
           <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs font-semibold text-sky-700 flex items-center gap-2">
             <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            <span>正在偵測證件邊界…</span>
+            <span>正在偵測證件…</span>
           </div>
         )}
         {rectifyStatus === 'failed' && (

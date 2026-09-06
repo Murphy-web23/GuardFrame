@@ -83,8 +83,12 @@ export const CHALLENGE_MAP: Record<ChallengeType, ChallengeConfig> = {
   },
   wave: {
     type: 'wave',
-    title: '請將手抬至臉前揮手至少 2 次',
-    sub: '將手抬到臉的高度，前後揮動至少兩次',
+    // 2026-08-31：申請人 1601（長輩）揮手動作實際有做，但速度太快、
+    // 動態模糊導致 Track4 手部關鍵點模型整段 0 偵測（見當天對話紀錄），
+    // MediaPipe 信心門檻、CLAHE 前處理兩條路都已實測無效。文案改成
+    // 明確要求放慢速度，從源頭減少動態模糊，不動偵測演算法本身。
+    title: '請放慢速度，在臉前來回揮手至少三次',
+    sub: '放慢速度，將手抬到臉的高度前後揮動至少三次',
     // 7 秒，對應後端 config.BASELINE_ACTION_DURATIONS['wave_hand']。
     // 這裡原本寫 5 秒，跟後端對不起來——揮手這段同時也是 Track 4
     // 遮擋分析要用的區間（phases.occlusion），時長算錯會讓後端切出
@@ -98,7 +102,7 @@ export const CHALLENGE_MAP: Record<ChallengeType, ChallengeConfig> = {
     // 揮手動作。真人測試（申請人937）就踩到這個問題：手拉遠揮手打
     // 招呼，兩層判定都算 0 次遮擋循環直接失敗。改成更明確的說法。
     durationSec: ACTION_DURATIONS_SEC.wave_hand,
-    voiceText: '請將手抬至臉前揮手至少兩次。',
+    voiceText: '請放慢速度，在臉前來回揮手至少三次。',
     icon: Hand,
     emoji: '👋',
   },
@@ -115,6 +119,52 @@ export const CHALLENGE_MAP: Record<ChallengeType, ChallengeConfig> = {
 // 同一個值，才能讓「錄影實際停止的時間」跟「告訴後端的影格範圍」
 // 對得上。
 const LIGHTING_BUFFER_MS = 400;
+
+// 2026-08-31：申請人 1601（長輩）揮手速度太快、動態模糊導致 Track4
+// 手部關鍵點模型整段 0 偵測（track4_occlusion/hand_tracking.py 檔頭
+// 已記錄：MediaPipe 信心門檻調低、CLAHE 前處理兩條路都實測無效，
+// 因為模糊已經在編碼當下把邊緣資訊真的抹掉了）。這裡改成從源頭減少
+// 模糊——只在揮手挑戰的 7 秒視窗鎖定曝光時間，範圍比 2026-08-28
+// 那次「整個 session 都鎖」小很多（那次因為懷疑跟 Android Step5 卡頓
+// 有關而整個移除，且從未實測過效果）。
+//
+// WAVE_EXPOSURE_LOCK_ENABLED 是唯一開關：測試完如果沒有幫助（Track4
+// waveCyclesDetected 沒有改善），把這個改回 false 就完全恢復原狀，
+// 不用刪 tryLockExposureForWave()/restoreAutoExposureAfterWave() 這兩個
+// 函式——內部本來就會在裝置不支援、或任何錯誤時直接放棄，不影響錄影。
+const WAVE_EXPOSURE_LOCK_ENABLED = true;
+
+async function tryLockExposureForWave(stream: MediaStream | null) {
+  if (!WAVE_EXPOSURE_LOCK_ENABLED || !stream) return;
+  const track = stream.getVideoTracks()[0];
+  if (!track || typeof track.getCapabilities !== 'function') return;
+  try {
+    const capabilities = track.getCapabilities() as MediaTrackCapabilities & {
+      exposureTime?: { min: number; max: number };
+    };
+    if (!capabilities.exposureTime) return; // 裝置/瀏覽器不支援就直接放棄
+    // 曝光時間取可調範圍偏短的那一端（15% 處），縮短單格曝光時間以
+    // 減少動態模糊，不取最短——太短畫面會太暗，反而傷到其他判定。
+    const { min, max } = capabilities.exposureTime;
+    const shortExposure = min + (max - min) * 0.15;
+    await track.applyConstraints({
+      advanced: [{ exposureMode: 'manual', exposureTime: shortExposure } as any],
+    });
+  } catch {
+    // 鎖定失敗就當作沒這回事，不影響錄影，只是模糊沒被緩解
+  }
+}
+
+async function restoreAutoExposureAfterWave(stream: MediaStream | null) {
+  if (!WAVE_EXPOSURE_LOCK_ENABLED || !stream) return;
+  const track = stream.getVideoTracks()[0];
+  if (!track) return;
+  try {
+    await track.applyConstraints({ advanced: [{ exposureMode: 'continuous' } as any] });
+  } catch {
+    // 一樣忽略，恢復失敗頂多後面幾個動作曝光沒調回來，不影響錄影本身
+  }
+}
 
 interface FaceVerificationEngineProps {
   applicantId: number;
@@ -572,6 +622,15 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
       // Speak prompt ONCE when entering this challenge step
       speakPrompt(currentDef.voiceText, `challenge_step_${currentChallengeIndex}_${currentType}`);
 
+      // 揮手挑戰進來時嘗試鎖定曝光時間（見 WAVE_EXPOSURE_LOCK_ENABLED
+      // 上方說明），離開揮手挑戰（不管換到下一個動作還是整個流程結束）
+      // 都要恢復自動曝光，不能讓後面的動作/照明挑戰一直卡在手動曝光。
+      if (currentType === 'wave') {
+        tryLockExposureForWave(streamRef.current);
+      } else {
+        restoreAutoExposureAfterWave(streamRef.current);
+      }
+
       setChallengeState('active');
       setWaveCount(0);
       let countdown = currentDef.durationSec;
@@ -582,11 +641,14 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
 
         // Wave mock progress within the 5s challenge
         if (currentType === 'wave') {
-          if (countdown === 3) {
+          if (countdown === 5) {
             setWaveCount(1); // First wave completed
             if (isDesktop) playAudioCue('wave'); else playMobileAudioCue('wave');
-          } else if (countdown === 1) {
+          } else if (countdown === 3) {
             setWaveCount(2); // Second wave completed
+            if (isDesktop) playAudioCue('wave'); else playMobileAudioCue('wave');
+          } else if (countdown === 1) {
+            setWaveCount(3); // Third wave completed
             if (isDesktop) playAudioCue('wave'); else playMobileAudioCue('wave');
           }
         }
@@ -602,7 +664,7 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
           // 「切換下一步」兩件事。
           setCurrentCountdown(0);
           if (currentType === 'wave') {
-            setWaveCount(2);
+            setWaveCount(3);
           }
           setChallengeState('completed');
           // 2026-08-24：手機版動作結束時原本沒有任何提示音，只有等下一個
@@ -615,6 +677,13 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
           if (currentChallengeIndex < activeSequence.length - 1) {
             setCurrentChallengeIndex((prev) => prev + 1);
           } else {
+            // 挑戰順序規定最後一個動作永遠是 blink 或 wave_hand（見
+            // api/routes.py get_challenge_order()），如果剛好是 wave_hand
+            // 結束，曝光還鎖在手動模式，這裡要恢復，不能讓 Track3
+            // 照明響應階段也卡在手動曝光。
+            if (currentType === 'wave') {
+              restoreAutoExposureAfterWave(streamRef.current);
+            }
             // All 4 challenges completed -> Transition to Track 3: 照明響應 (5 seconds)
             setOverallStage('track3_photometric');
           }
@@ -1183,8 +1252,8 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
                     {currentType === 'wave' ? (
                       <span className="text-amber-300 font-bold">
                         {isDesktop
-                          ? `揮手進度: ${waveCount}/2 次 ${waveCount >= 2 ? '✓ (已完成)' : '(請將手抬至臉前揮手)'}`
-                          : `揮手進度: ${waveCount}/2 次 ${waveCount >= 2 ? '✓ 已完成' : '(請將手抬至臉前)'}`}
+                          ? `揮手進度: ${waveCount}/3 次 ${waveCount >= 3 ? '✓ (已完成)' : '(請將手抬至臉前揮手)'}`
+                          : `揮手進度: ${waveCount}/3 次 ${waveCount >= 3 ? '✓ 已完成' : '(請將手抬至臉前)'}`}
                       </span>
                     ) : (
                       <span className="text-sky-200">
@@ -1257,8 +1326,32 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
               <div className="absolute -top-1.5 left-10 right-10 h-1 bg-gradient-to-r from-transparent via-sky-300/60 to-transparent rounded-full" />
               <div className="absolute -bottom-1.5 left-10 right-10 h-1 bg-gradient-to-r from-transparent via-sky-300/60 to-transparent rounded-full" />
 
+              {/* 2026-09-01：長輩使用者實測發現拿手機習慣性離很遠，臉在
+                  畫面中偏小，Track3/baseline 判定失敗率也偏高。原本只
+                  在動畫示範畫面最後放過一次提醒，使用者反饋「不明顯」，
+                  改成在這裡（準備開始的中央取景框內）用動畫示範，這是
+                  使用者按下開始鍵前最後、也最顯眼的畫面位置。 */}
+              {overallStage === 'ready' && (
+                <div className="relative w-full h-full flex flex-col items-center justify-center select-none px-4 text-center gap-3">
+                  <motion.div
+                    animate={{ scale: [0.55, 1.15, 0.55] }}
+                    transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+                  >
+                    <AIGuardian size="lg" mood="guiding" />
+                  </motion.div>
+                  <div className="flex items-center gap-2.5 text-sm sm:text-base font-medium text-amber-800 bg-amber-50 px-3 py-2 rounded-2xl border border-amber-200 shadow-lg leading-snug">
+                    <ScanFace className="h-5 w-5 text-amber-600 shrink-0" />
+                    <span>
+                      請將臉靠近鏡頭
+                      <br />
+                      讓臉部完整佔滿框內
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {/* FACE LANDMARK GUIDE: Eyes, Nose, Mouth */}
-              <div className="relative w-full h-full flex flex-col items-center justify-center select-none">
+              <div className={`relative w-full h-full flex flex-col items-center justify-center select-none ${overallStage === 'ready' ? 'hidden' : ''}`}>
                 {/* 1. Eyes Row */}
                 <div className="absolute top-[32%] inset-x-6 sm:inset-x-7 flex items-center justify-between">
                   {/* Left Eye */}

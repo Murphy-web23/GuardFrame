@@ -35,6 +35,12 @@ track1_synthetic/weights/
 .ipynb_checkpoints/
 frontend/.vite/
 
+# 本機除錯用，不進 git：後端/前端 dev server 的 log、demo 用的 QR code
+# 圖檔（每次重開 Cloudflare Tunnel 網址都會變，圖本身沒有保存價值）
+backend-debug.log
+frontend/*.log
+mobile_qr.png
+
 # 簡報素材，本機用，不進 git
 /mascot_assets/
 .vscode/

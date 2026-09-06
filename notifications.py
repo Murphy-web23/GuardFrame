@@ -86,6 +86,46 @@ def _case_line(record_id: int | None) -> str:
     return f"案件編號：{record_id}\n" if record_id is not None else ""
 
 
+# 2026-09-01 新增：揮手動作重錄通知。跟 pass/reject/review 三種案件的
+# 通知都不一樣——這封是主動邀請申請人「還有機會補救」，不是宣布最終
+# 結果，所以另外寫一份文案，不套用 _VERDICT_BODY／_REVIEW_ACTION_BODY
+# 那兩組模板（語氣跟目的都不同）。
+_WAVE_RETRY_SUBJECT = "【GuardFrame 數位開戶】請重新錄製一個驗證動作"
+
+_WAVE_RETRY_BODY = (
+    "{name} 您好，\n\n"
+    "感謝您使用 GuardFrame 數位開戶服務。\n\n"
+    "系統在核對您的身分驗證影片時，其中一個動作（臉前揮手）因為畫面"
+    "不夠清晰，暫時無法判讀，可能是錄影當下手機有輕微晃動。\n"
+    "{case_line}"
+    "為了不影響您的開戶進度，請點擊下方連結，重新錄製這個動作即可，"
+    "不需要重填資料或重新輸入驗證碼：\n"
+    "{retry_url}\n\n"
+    "錄製時建議將手機放穩（例如靠著桌面或用雙手扶著），並放慢速度、"
+    "在臉前來回揮手至少三次。這個連結 24 小時內有效，逾期請重新申請"
+    "開戶。\n\n"
+    "{signature}"
+)
+
+
+def send_wave_retry_email(
+    to_email: str, applicant_name: str, retry_url: str, record_id: int | None = None
+) -> bool:
+    """寄送揮手動作重錄邀請信，見 config.WAVE_RETRY_TOKEN_EXPIRY_HOURS
+    跟 api/routes.py _wave_retry_eligible() 的說明。
+
+    回傳規則同 send_verdict_email()：API Key 未設定或寄送出錯都回傳
+    False 而不拋例外。
+    """
+    body = _WAVE_RETRY_BODY.format(
+        name=applicant_name,
+        case_line=_case_line(record_id),
+        retry_url=retry_url,
+        signature=_SIGNATURE,
+    )
+    return _send(to_email, _WAVE_RETRY_SUBJECT, body, tag="wave_retry")
+
+
 def _send(to_email: str, subject: str, body: str, tag: str) -> bool:
     """實際打 Resend API 的共用邏輯。tag 只用於失敗時的 log 訊息。"""
     if not config.RESEND_API_KEY:

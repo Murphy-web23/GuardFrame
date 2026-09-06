@@ -205,6 +205,10 @@ export const ActionsDemoPreview: React.FC<ActionsDemoPreviewProps> = ({ onStart 
           : `請看完全部 ${total} 張示範（還差 ${remainingCount} 張），就可以開始驗證。`}
       </div>
 
+      {/* 2026-09-01：「靠近鏡頭」提醒原本放在這裡，使用者反饋不夠顯眼，
+          已經搬到 FaceVerificationEngine.tsx 的 ready 階段中央取景框
+          （按下開始鍵前最後、也最顯眼的畫面位置），這裡不用重複放。 */}
+
       <button
         type="button"
         onClick={onStart}

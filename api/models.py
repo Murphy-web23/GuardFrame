@@ -154,6 +154,21 @@ class VerificationRecordRow(Base):
     vlm_model: Mapped[Optional[str]] = mapped_column(String(50))
     vlm_latency_ms: Mapped[Optional[Decimal]] = mapped_column(Numeric(8, 2))
 
+    # -- 區塊十：揮手動作重錄（2026-09-01 新增，見 config.py 說明）--
+    # 只有「純粹卡在揮手」的案件才會有值（見 api/routes.py
+    # _wave_retry_eligible()），其餘案件全部 NULL/False。token 比照
+    # Applicant.session_id 的做法用 secrets.token_urlsafe 產生，寄在
+    # email 連結裡，不走原本的 X-Session-Id 機制——申請人補錄時原本的
+    # session 很可能已經過期或分頁已經關掉。
+    wave_retry_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    wave_retry_token_expires_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
+    wave_retry_used: Mapped[bool] = mapped_column(default=False)
+    wave_retry_video_path: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    # 補錄前的原始風險分數/判定，只是稽核用途——覆蓋 baseline/occ 欄位
+    # 前先留一份，複核人員在後台才看得出「這筆案件補錄過，原本是多少」。
+    wave_retry_original_risk_score: Mapped[Optional[int]] = mapped_column(nullable=True)
+    wave_retry_original_verdict: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+
     applicant: Mapped["Applicant"] = relationship(back_populates="verification_records")
 
 

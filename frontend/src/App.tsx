@@ -30,6 +30,9 @@ import { AdminLayout } from './components/admin/AdminLayout';
 import { AdminLogin } from './components/admin/AdminLogin';
 import { getStoredAuth, setStoredAuth } from './data/mockAuth';
 
+// 2026-09-01 新增：揮手動作補錄頁，見 WaveRetryScreen.tsx 的說明。
+import { WaveRetryScreen } from './components/screens/WaveRetryScreen';
+
 const initialFormData: FormData = {
   phone: '',
   smsCode: '',
@@ -61,17 +64,25 @@ const initialFormData: FormData = {
 };
 
 export default function App() {
-  const [appMode, setAppMode] = useState<'user_onboarding' | 'admin'>('user_onboarding');
+  const [appMode, setAppMode] = useState<'user_onboarding' | 'admin' | 'wave_retry'>('user_onboarding');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => getStoredAuth());
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('welcome');
   const [formData, setFormData] = useState<FormData>(initialFormData);
+  // 2026-09-01 新增：email 裡的揮手補錄連結格式是 /retry-wave?token=xxx，
+  // 見 notifications.py send_wave_retry_email() 的說明。跟 #admin 那組
+  // hash-based 路由分開判斷，因為這個連結是 query string，不是 hash。
+  const [waveRetryToken, setWaveRetryToken] = useState<string>('');
 
   // Listen to URL Hash changes for direct link navigation (#admin or #user)
   useEffect(() => {
     const handleUrlRoute = () => {
       const hash = window.location.hash.toLowerCase();
       const pathname = window.location.pathname.toLowerCase();
-      if (hash === '#admin' || hash.startsWith('#/admin') || pathname.endsWith('/admin')) {
+      const token = new URLSearchParams(window.location.search).get('token');
+      if (pathname.endsWith('/retry-wave') && token) {
+        setWaveRetryToken(token);
+        setAppMode('wave_retry');
+      } else if (hash === '#admin' || hash.startsWith('#/admin') || pathname.endsWith('/admin')) {
         setAppMode('admin');
       } else if (hash === '#user' || hash.startsWith('#/user') || hash === '') {
         setAppMode('user_onboarding');
@@ -373,7 +384,14 @@ export default function App() {
       style={{ height: 'var(--app-height, 100vh)' }}
     >
       {/* Primary Simulator & Layout Switcher */}
-      {appMode === 'user_onboarding' ? (
+      {appMode === 'wave_retry' ? (
+        // 2026-09-01 新增：不包在 DeviceSimulator 裡——那是給桌面預覽用
+        // 的手機外框模擬工具，這個頁面是使用者從 email 連結直接打開的
+        // 真實頁面（多半就是在真手機瀏覽器上），不需要、也不應該被套上
+        // 模擬器外框。獨立分支，不影響下面 user_onboarding／admin 的
+        // 既有邏輯。
+        <WaveRetryScreen token={waveRetryToken} />
+      ) : appMode === 'user_onboarding' ? (
         <DeviceSimulator>
           {/* 真正的響應式分流：CSS breakpoint 決定顯示哪一組畫面，
               不是 JS 手動切換。後台入口只能透過網址 #admin 進入，
