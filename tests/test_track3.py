@@ -126,6 +126,23 @@ def test_generate_light_log_respects_custom_segment_count():
     assert len(log["segments"]) == 8
 
 
+def test_generate_light_log_covers_all_colors_before_repeating():
+    """2026-09-07：段數（config.PHOTO_SEGMENT_COUNT=5）接近顏色數（4）
+    時，原本每段各自獨立隨機抽色，容易連續抽到同一色——同色段落對應
+    幾乎一樣的亮度（COLOR_BRIGHTNESS），讓拿去跟真人反光曲線算相關
+    係數的「標準答案」曲線近乎一直線，真人測試因此反覆量不到相關
+    係數。改成前面先把顏色洗牌各出現一次，這裡驗證：只要段數 >=
+    顏色種類數，前 len(COLOR_NAMES) 段一定涵蓋全部顏色、不重複，不能
+    再連續抽到同一色。用多組不同 seed 測，確保不是單一 seed 剛好通過。
+    """
+    for seed in range(20):
+        log = seq.generate_light_log(seed=seed)
+        colors = [s["color"] for s in log["segments"]]
+        first_batch = colors[: len(seq.COLOR_NAMES)]
+        assert set(first_batch) == set(seq.COLOR_NAMES)
+        assert len(first_batch) == len(set(first_batch))
+
+
 # --------------------------------------------------------------------------
 # geometry.py：region_brightness_series
 # --------------------------------------------------------------------------

@@ -16,9 +16,14 @@ import { ACTION_DURATIONS_SEC, RECORDING_FPS } from '../../utils/verificationRec
 // 像素變少，畫質變好），沒有沿用那邊還在實驗、未驗證有效的曝光鎖定
 // （WAVE_EXPOSURE_LOCK_ENABLED）。
 
-type ScreenState = 'loading' | 'invalid' | 'ready' | 'recording' | 'uploading' | 'done' | 'upload_error';
+type ScreenState = 'loading' | 'invalid' | 'ready' | 'countdown' | 'recording' | 'uploading' | 'done' | 'upload_error';
 
 const WAVE_DURATION_SEC = ACTION_DURATIONS_SEC.wave_hand;
+
+// 2026-09-08：原本按下「開始錄影」後相機一開就直接進錄影，使用者反映
+// 開始得太突然，來不及準備動作/把手抬到定位。加一個 3 秒倒數，跟主流程
+// FaceVerificationEngine.tsx 的動作挑戰倒數給使用者的準備時間一致。
+const COUNTDOWN_SEC = 3;
 
 function getSupportedMimeType(): string | undefined {
   const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
@@ -37,6 +42,7 @@ export const WaveRetryScreen: React.FC<WaveRetryScreenProps> = ({ token }) => {
   const [applicantName, setApplicantName] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [secondsLeft, setSecondsLeft] = useState<number>(WAVE_DURATION_SEC);
+  const [countdown, setCountdown] = useState<number>(COUNTDOWN_SEC);
   const [resultVerdict, setResultVerdict] = useState<'pass' | 'review' | 'reject' | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -70,15 +76,27 @@ export const WaveRetryScreen: React.FC<WaveRetryScreenProps> = ({ token }) => {
     };
   }, []);
 
-  const startRecording = async () => {
+  // 2026-09-08：拆成「開相機＋準備 recorder」跟「真的開始錄」兩段，
+  // 中間插一個 3 秒倒數（見下面的 countdown useEffect）——原本按下
+  // 「開始錄影」馬上就開始錄，使用者反映太突然、來不及準備動作。
+  const prepareCamera = async () => {
     setErrorMsg('');
     try {
+      // 2026-09-08：跟 FaceVerificationEngine.tsx 手機版套用同一個實驗性
+      // 高幀率設定（見那邊的詳細說明）——這個頁面本來就只有手機會用到
+      // （email 連結補錄），保持跟主流程一致。真人測試（applicant 1707）
+      // 證實幀率翻倍會讓 Android Chrome 固定位元率預算攤薄到每格畫質
+      // 變差，連帶讓身分連續性判定失敗，關閉退回 30fps。
+      const MOBILE_HIGH_FPS_ENABLED = false;
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
           width: { ideal: 640 },
           height: { ideal: 640 },
-          frameRate: { ideal: RECORDING_FPS, max: RECORDING_FPS },
+          frameRate: {
+            ideal: MOBILE_HIGH_FPS_ENABLED ? 60 : RECORDING_FPS,
+            max: MOBILE_HIGH_FPS_ENABLED ? 60 : RECORDING_FPS,
+          },
         },
         audio: false,
       });
@@ -100,13 +118,24 @@ export const WaveRetryScreen: React.FC<WaveRetryScreenProps> = ({ token }) => {
         void uploadRetry(blob);
       };
       recorderRef.current = recorder;
-      recorder.start();
-      setState('recording');
-      setSecondsLeft(WAVE_DURATION_SEC);
+      setState('countdown');
+      setCountdown(COUNTDOWN_SEC);
     } catch (err: any) {
       setErrorMsg(err?.message || '無法取得相機權限，請確認已允許本頁面使用相機');
     }
   };
+
+  useEffect(() => {
+    if (state !== 'countdown') return;
+    if (countdown <= 0) {
+      recorderRef.current?.start();
+      setState('recording');
+      setSecondsLeft(WAVE_DURATION_SEC);
+      return;
+    }
+    const timer = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [state, countdown]);
 
   useEffect(() => {
     if (state !== 'recording') return;
@@ -150,7 +179,7 @@ export const WaveRetryScreen: React.FC<WaveRetryScreenProps> = ({ token }) => {
           </div>
         )}
 
-        {(state === 'ready' || state === 'recording' || state === 'uploading') && (
+        {(state === 'ready' || state === 'countdown' || state === 'recording' || state === 'uploading') && (
           <>
             <div className="flex items-center gap-3">
               <div className="h-11 w-11 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center shrink-0">
@@ -180,6 +209,11 @@ export const WaveRetryScreen: React.FC<WaveRetryScreenProps> = ({ token }) => {
                   尚未開啟相機
                 </div>
               )}
+              {state === 'countdown' && (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-900/40">
+                  <span className="text-white text-6xl font-black drop-shadow-lg">{countdown}</span>
+                </div>
+              )}
             </div>
 
             {state === 'ready' && (
@@ -190,12 +224,18 @@ export const WaveRetryScreen: React.FC<WaveRetryScreenProps> = ({ token }) => {
                 {errorMsg && <p className="text-xs text-rose-600">{errorMsg}</p>}
                 <button
                   type="button"
-                  onClick={startRecording}
+                  onClick={prepareCamera}
                   className="w-full py-3.5 rounded-2xl bg-sky-500 hover:bg-sky-600 active:scale-[0.99] text-white font-bold text-sm shadow-lg shadow-sky-500/20 cursor-pointer transition-all"
                 >
                   開始錄影
                 </button>
               </>
+            )}
+
+            {state === 'countdown' && (
+              <p className="text-center text-sm font-bold text-slate-700">
+                請準備好，即將開始錄影
+              </p>
             )}
 
             {state === 'recording' && (

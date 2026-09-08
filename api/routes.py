@@ -233,10 +233,27 @@ def get_challenge_order(
         # 2026-08-27 到 2026-08-29：曾暫時固定成「眨眼、左轉頭、右轉頭、
         # 揮手」方便測試比對，測試告一段落，改回原本的隨機邏輯，
         # 恢復 §5.3 的隨機順序防重放設計。
+        # 2026-09-07：真人測試（applicant 1692，透過 Cloudflare Tunnel）
+        # 反覆撞到「挑戰順序與系統指派的不符」——查證後發現不是使用者
+        # 操作問題，是這裡的競態條件：如果兩個請求幾乎同時抵達（網路
+        # 延遲、伺服器負載重時窗口更容易被撞到），都會讀到
+        # applicant.challenge_order 還是 None，各自用 random.shuffle()
+        # 產生「不同」的順序，分別寫回資料庫——最後留在資料庫的那組，
+        # 不保證跟前端實際拿去顯示動畫、錄影用的那組一致，直接造成
+        # 上傳時比對失敗。真人測試那次資料庫裡的 challenge_order 事後
+        # 查證確實是 null，不是巧合。
+        #
+        # 改成用 applicant.session_id 當隨機種子——不管幾個請求同時
+        # call 這裡、也不管執行順序，用同一個 session_id 算出來的結果
+        # 保證完全一樣，從根本消除競態，不需要額外加鎖或重試機制。
+        # session_id 本身是 sms/verify 成功後才產生的隨機字串（見
+        # verify_sms()），每個 session 各自不同，不會讓不同申請人拿到
+        # 同一組順序，§5.3 隨機順序防重放的安全設計不受影響。
+        rng = random.Random(applicant.session_id)
         safe_last_actions = ["blink", "wave_hand"]
-        last_action = random.choice(safe_last_actions)
+        last_action = rng.choice(safe_last_actions)
         remaining = [a for a in config.BASELINE_ACTION_DURATIONS if a != last_action]
-        random.shuffle(remaining)
+        rng.shuffle(remaining)
         order = remaining + [last_action]
         applicant.challenge_order = order
         db.commit()
@@ -517,7 +534,22 @@ async def verify(
     # 影片本身沒真的照那個順序演也無所謂。沒有指派過順序（沒呼叫過
     # get_challenge_order()）一律視為不合法，不允許略過這關直接驗證。
     uploaded_order = [c.action for c in challenges_payload.challenges]
-    if applicant.challenge_order is None or uploaded_order != applicant.challenge_order:
+    order_matched = (
+        applicant.challenge_order is not None
+        and uploaded_order == applicant.challenge_order
+    )
+
+    # 每組順序只能用來提交一次（不管這次提交順序對不對），提交後立刻
+    # 作廢：下次呼叫 get_challenge_order() 會強制重新洗牌。防的是「查到
+    # 順序後可以在同一組順序上無限次重試」——沒有這個機制的話，攻擊者
+    # 查一次順序就能反覆調整、重送到猜中或準備好對應內容為止，隨機順序
+    # 防重放的意義就打折了。不能完全防住「查到順序後第一次就準備好對應
+    # 內容」這種情況（順序本來就得讓合法使用者看到才能照做），這一層防
+    # 的是重試成本，真正擋內容本身有沒有問題的是後面 Track 1/3/4。
+    applicant.challenge_order = None
+    db.commit()
+
+    if not order_matched:
         raise HTTPException(
             status_code=422,
             detail="挑戰順序與系統指派的不符，請重新呼叫 challenge-order 並依指定順序錄製",

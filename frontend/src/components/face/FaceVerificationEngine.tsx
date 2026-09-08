@@ -134,6 +134,18 @@ const LIGHTING_BUFFER_MS = 400;
 // 函式——內部本來就會在裝置不支援、或任何錯誤時直接放棄，不影響錄影。
 const WAVE_EXPOSURE_LOCK_ENABLED = true;
 
+// 2026-09-07：iOS Safari 真人測試（兩支不同手機都一樣）回報跟 Android
+// 同樣的症狀（音效正常、語音完全沒聲音）——但 iOS 一直以來從沒出現過
+// 這個問題（見下面 speakPrompt() 裡多處「iOS Safari 完全沒有這個
+// 問題」的舊註解），時間點對得上：這是上一次為了修 Android「提示音
+// 搶音訊焦點」問題、把語音改成「等提示音播完的 ended 事件才觸發」
+// 之後才出現的。查資料證實 iOS Safari 對 speak() 有更嚴格的要求——
+// 呼叫時間點要夠接近使用者互動，透過事件監聽器/setTimeout 延後太久
+// 容易被判定「不算使用者觸發」而整個靜音失敗，這正是那次改動做的事。
+// Android 需要那個延遲（治音訊焦點搶占），iOS 不需要、而且會被那個
+// 延遲害死，两边症狀相同、成因相反，不能用同一套延遲邏輯，只能拆開。
+const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent);
+
 async function tryLockExposureForWave(stream: MediaStream | null) {
   if (!WAVE_EXPOSURE_LOCK_ENABLED || !stream) return;
   const track = stream.getVideoTracks()[0];
@@ -451,8 +463,13 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         }
       };
 
-      if (isDesktop) {
+      if (isDesktop || isIOS) {
         // 桌面版完全不動：原本的固定 50ms micro-timeout。
+        // 2026-09-07：iOS Safari 併進這條路——它要求 speak() 呼叫時間點
+        // 要貼近使用者互動，不能像下面 Android 那樣等提示音播完的
+        // 'ended' 事件才觸發（那個延遲正是 iOS 語音突然消失的原因，
+        // 見上面 isIOS 宣告處的說明）。iOS 從來沒有 Android 那種提示音
+        // 搶音訊焦點的問題，不需要也不能等。
         setTimeout(doSpeak, 50);
       } else {
         // 2026-08-30：手機版真人測試抓到具體錯誤碼 utterance.onerror =
@@ -466,6 +483,8 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         // 不用再猜時間。同時保留一個較短的保險逾時（600ms，仍比原本的
         // 猜測值短），避免提示音因為自動播放被擋、沒有 src 等原因永遠
         // 不觸發 'ended' 時，語音整個不會出現。
+        // 2026-09-07：這條路現在只有 Android 會走到（isIOS 已經在上面
+        // 分流出去），變數名稱/註解沿用原樣，邏輯本身沒有改變。
         const cueAudio = cueType === 'success' ? mobileSuccessAudioRef.current : mobileActionAudioRef.current;
         let spoken = false;
         const speakOnce = () => {
@@ -528,16 +547,42 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
         // 不會重新逼手機數位變焦）。桌面版的位元率設定原本就有效
         // （macOS 平台會遵守），不受這個問題影響，維持 864/1080 不動。
         const MOBILE_CAPTURE_SIZE = 640;
+        // 2026-09-08：實驗性——真人測試（Zoom）證實揮手動作真的有做
+        // 足夠次數，系統只是把動態模糊的那幾次漏算掉（見當天對話紀錄，
+        // 直接看畫面數過確實揮了 2-3 次，只算到 1 次）。動態模糊量大致
+        // 跟「單格曝光時間 × 手部移動速度」成正比，提高幀率會逼相機
+        // 縮短單格曝光時間，理論上能降低單格模糊量——這個方向還沒被
+        // 真人測試證實有效或無效，門檻調整／CLAHE 前處理那兩條路才是
+        // 已經證實走不通的。只在手機版試，桌面版完全不動。
+        //
+        // 一鍵退回：改成 false 就完全恢復原本的 30fps 行為，不用刪這段
+        // 程式碼——真人測試如果沒有改善（waveCyclesDetected 沒有變化）
+        // 或者暗光環境下 ISO 補償造成雜訊嚴重影響其他判定，直接關掉即可。
+        //
+        // 2026-09-08：真人測試（applicant 1707）證實——揮手循環數這項
+        // 真的過了（3 次），但 Android Chrome 的固定位元率預算是「每秒」
+        // 多少，不是「每格」多少，幀率翻倍等於每格分到的資料量少一半，
+        // 單格壓縮畫質反而變差（blur_score 只有 44.80，明顯低於平常的
+        // 200-400），連帶讓身分連續性判定（occ_max_identity_drop 直接
+        // 頂到上限 1.0）失敗。解決一個問題、製造另一個問題，整體沒有
+        // 變好，關閉退回 30fps。
+        const MOBILE_HIGH_FPS_ENABLED = false;
+        const MOBILE_RECORDING_FPS = MOBILE_HIGH_FPS_ENABLED ? 60 : RECORDING_FPS;
         const constraints: MediaStreamConstraints = {
           video: {
             facingMode: 'user',
             width: { ideal: isDesktop ? 864 : MOBILE_CAPTURE_SIZE },
             height: { ideal: isDesktop ? 1080 : MOBILE_CAPTURE_SIZE },
             ...(isDesktop ? { aspectRatio: { ideal: 0.8 } } : {}),
-            // 要求瀏覽器盡量用固定的 fps 錄——後端切影格區間時是用這個
-            // 事先宣告的 fps 算的（見 verificationRecording.ts 頂部
-            // 的說明），沒有這個限制的話瀏覽器選的 fps 可能落差很大。
-            frameRate: { ideal: RECORDING_FPS, max: RECORDING_FPS },
+            // 要求瀏覽器盡量用固定的 fps 錄——後端切影格區間時不依賴這個
+            // 宣告值本身（改用解碼後量到的真實 fps，見
+            // verificationRecording.ts 頂部的說明），只是給瀏覽器一個
+            // 明確目標，沒有這個限制的話瀏覽器選的 fps 可能落差很大。
+            // 桌面版維持原本的 RECORDING_FPS（30）完全不動。
+            frameRate: {
+              ideal: isDesktop ? RECORDING_FPS : MOBILE_RECORDING_FPS,
+              max: isDesktop ? RECORDING_FPS : MOBILE_RECORDING_FPS,
+            },
           },
           audio: false,
         };
@@ -625,10 +670,18 @@ export const FaceVerificationEngine: React.FC<FaceVerificationEngineProps> = ({
       // 揮手挑戰進來時嘗試鎖定曝光時間（見 WAVE_EXPOSURE_LOCK_ENABLED
       // 上方說明），離開揮手挑戰（不管換到下一個動作還是整個流程結束）
       // 都要恢復自動曝光，不能讓後面的動作/照明挑戰一直卡在手動曝光。
-      if (currentType === 'wave') {
-        tryLockExposureForWave(streamRef.current);
-      } else {
-        restoreAutoExposureAfterWave(streamRef.current);
+      // 2026-09-07：這段原本沒有限定只在手機版執行，導致桌面版鏡頭也
+      // 被強制切成手動曝光——桌面版真人測試回報揮手步驟突然變頓、
+      // 曝光跑掉，就是這裡造成的。這個功能設計的目標本來就是 Android
+      // Chrome 手機錄影的動態模糊問題，桌面版從來沒有這個問題（見
+      // FaceVerificationEngine.tsx 開頭多處「桌面版完全不動」的原則），
+      // 加回 isDesktop 判斷，桌面版鏡頭完全不受這段影響。
+      if (!isDesktop) {
+        if (currentType === 'wave') {
+          tryLockExposureForWave(streamRef.current);
+        } else {
+          restoreAutoExposureAfterWave(streamRef.current);
+        }
       }
 
       setChallengeState('active');

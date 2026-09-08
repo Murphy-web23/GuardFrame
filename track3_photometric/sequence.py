@@ -95,8 +95,16 @@ def resample_light_curve(light_log, num_points):
 def generate_light_log(num_segments=None, segment_ms_range=None, seed=None):
     """產生一份合成的 light_log，供測試使用，不需要瀏覽器。
 
-    對齊前端實際邏輯（PLAN.md 階段2 Track3 前端部分）：固定段數、每段時長
-    在範圍內隨機、顏色隨機抽（可連續重複，前端邏輯本來就沒有排除這點）。
+    對齊前端實際邏輯（frontend/src/utils/verificationRecording.ts
+    generateLightLog()）：固定段數、每段時長在範圍內隨機、顏色先洗牌
+    保證每種都出現一次，段數超過顏色數才用隨機（可重複）補滿。
+
+    2026-09-07：原本顏色是每段各自獨立隨機抽（可連續重複）——段數
+    （5）接近顏色數（4）時，連續抽到同一色的機率不低，同色段落對應
+    幾乎一樣的螢幕亮度（COLOR_BRIGHTNESS），導致拿去跟真人反光曲線
+    算相關係數的「標準答案」曲線近乎一直線，真人測試因此反覆量不到
+    相關係數（不是使用者的問題）。改成跟前端同一套邏輯，見那邊的
+    詳細說明。
 
     參數:
         num_segments: int | None，預設讀 config.PHOTO_SEGMENT_COUNT
@@ -113,11 +121,13 @@ def generate_light_log(num_segments=None, segment_ms_range=None, seed=None):
         config.PHOTO_SEGMENT_MAX_MS,
     )
     rng = random.Random(seed)
+    shuffled_colors = list(COLOR_NAMES)
+    rng.shuffle(shuffled_colors)
 
     segments = []
     t = 0
-    for _ in range(num_segments):
-        color = rng.choice(COLOR_NAMES)
+    for i in range(num_segments):
+        color = shuffled_colors[i] if i < len(shuffled_colors) else rng.choice(COLOR_NAMES)
         duration = rng.randint(low, high)
         segments.append(
             {
