@@ -45,10 +45,28 @@ export const RECORDING_FPS = 30;
  * （§5.2 格式要求）。
  */
 export function generateLightLog(startTimestamp: number = Date.now()): LightLog {
+  // 2026-09-07：原本每段各自獨立隨機選色（4 選 1，可重複）。5 段、
+  // 只有 4 種顏色時，連續抽到同一色的機率不低——同色的段落對應到
+  // 幾乎一樣的螢幕亮度（見 track3_photometric/sequence.py
+  // COLOR_BRIGHTNESS：灰白 1.00、淡綠 0.72、淡紅 0.68、淡藍 0.62），
+  // 顏色重複太多次時，後端拿來算相關係數的「標準答案」亮度曲線會
+  // 變成近乎一直線——不管真人反光反應多標準，跟近乎一直線的東西
+  // 算相關係數在數學上就是不穩定、算不出高分。真人測試反覆撞到
+  // Track3「未偵測到照明響應」的根因就是這個，不是使用者的問題
+  // （見當天對話紀錄：reflectCurve 訊號其實正常，只是 lightCurve
+  // 幾乎沒有變化可以比對）。
+  //
+  // 改成先把 4 種顏色洗牌各出現一次，保證亮度一定有變化，段數超過
+  // 顏色數才用隨機（可重複）補滿——PHOTO_SEGMENT_COUNT=5、顏色數=4
+  // 時，只有最後一段可能跟前面重複，不會再連續重複到讓曲線變一直線。
+  const shuffledColors = [...LIGHT_COLOR_NAMES].sort(() => Math.random() - 0.5);
   const segments: LightLogSegment[] = [];
   let t = 0;
   for (let i = 0; i < PHOTO_SEGMENT_COUNT; i++) {
-    const color = LIGHT_COLOR_NAMES[Math.floor(Math.random() * LIGHT_COLOR_NAMES.length)];
+    const color =
+      i < shuffledColors.length
+        ? shuffledColors[i]
+        : LIGHT_COLOR_NAMES[Math.floor(Math.random() * LIGHT_COLOR_NAMES.length)];
     const durationMs =
       PHOTO_SEGMENT_MIN_MS + Math.floor(Math.random() * (PHOTO_SEGMENT_MAX_MS - PHOTO_SEGMENT_MIN_MS + 1));
     segments.push({ color, hex: LIGHT_COLOR_HEX[color], startMs: t, durationMs });

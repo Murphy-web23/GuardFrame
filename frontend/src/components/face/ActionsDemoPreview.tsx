@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Eye, ArrowLeft, ArrowRight, Hand, PlayCircle, ChevronLeft, ChevronRight, Check, Lock } from 'lucide-react';
+import { Eye, ArrowLeft, ArrowRight, Hand, PlayCircle, ChevronLeft, ChevronRight, Check, Lock, Glasses } from 'lucide-react';
 
 // 2026-08-29：使用者反饋——人臉驗證開始前，現在是邊做動作邊看文字/
 // 語音提示，沒有機會事先知道接下來要做什麼，尤其對長輩使用者容易措手
@@ -96,6 +96,25 @@ const DEMO_ITEMS: DemoItem[] = [
         animate={{ backgroundColor: ['#fef9c3', '#1e293b', '#fef9c3', '#38bdf8', '#fef9c3'] }}
         transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}
       />
+    ),
+  },
+  {
+    key: 'no_accessories',
+    label: '拿下眼鏡、口罩、帽子',
+    hint: '請先拿下眼鏡、口罩、帽子，讓臉部完整露出',
+    // 2026-09-07：目前模型對戴眼鏡（口罩、帽子同理，會遮住臉部特徵）
+    // 的真人辨識穩定度不足，容易誤判為人工複核。在補齊訓練資料前，
+    // 先在驗證開始前提醒使用者拿下，降低這個已知情境出現的頻率。放在
+    // 動畫示範卡片的最後一張，強迫使用者看完全部卡片才能開始驗證，
+    // 比放在前一頁的文字提醒明顯。這是暫時的止血作法，不能取代之後
+    // 補資料練模型。
+    render: () => (
+      <motion.div
+        animate={{ opacity: [1, 0.25, 1] }}
+        transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+      >
+        <Glasses className="h-16 w-16 text-sky-600" strokeWidth={2.2} />
+      </motion.div>
     ),
   },
 ];

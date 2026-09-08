@@ -105,6 +105,36 @@ def test_repeated_calls_within_same_session_return_same_order(client, applicant_
 
 
 @requires_db
+def test_concurrent_calls_within_same_session_return_same_order(client, applicant_id):
+    """2026-09-07：真人測試（applicant 1692，透過 Cloudflare Tunnel）反覆
+    撞到「挑戰順序與系統指派的不符」——查證是這裡的競態條件：兩個請求
+    幾乎同時抵達，都讀到 challenge_order 還是 None，各自用
+    random.shuffle() 產生不同的順序分別寫回資料庫。上面
+    test_repeated_calls_within_same_session_return_same_order 是循序
+    呼叫，不會撞到這個問題，這裡改用真正同時發出的兩個請求才測得到。
+    改成用 session_id 當隨機種子後，不管幾個請求同時呼叫、不管執行
+    順序，結果保證一致，這個測試直接鎖定這個修復。"""
+    import threading
+
+    headers = _set_session(applicant_id)
+    results = [None, None]
+
+    def call(i):
+        results[i] = client.get(
+            f"/api/applicants/{applicant_id}/challenge-order", headers=headers
+        ).json()
+
+    t1 = threading.Thread(target=call, args=(0,))
+    t2 = threading.Thread(target=call, args=(1,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert results[0] == results[1]
+
+
+@requires_db
 def test_returns_401_without_valid_session(client, applicant_id):
     response = client.get(
         f"/api/applicants/{applicant_id}/challenge-order",

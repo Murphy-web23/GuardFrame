@@ -205,6 +205,51 @@ def test_build_reasons_matches_failing_layers_in_fixed_order():
     ]
 
 
+def test_build_reasons_occlusion_wording_depends_on_which_check_failed():
+    """2026-09-07：applicant 1687 真人測試撞到的案例——身分連續性
+    （checks[1]）明明通過，只是揮手循環數沒過，理由文字卻寫死「疑似
+    即時換臉攻擊」，跟系統自己算出來的數字矛盾。三項子判定裡只有身分
+    連續性真的沒過，才該用最嚴重的措辭；其餘兩項沒過用比較中性的
+    說法，見 fusion._occlusion_reason()。"""
+    occ_cycles_fail_only = dict(
+        OCC_FAIL,
+        checks=[
+            {"label": "偵測到至少 2 次揮手遮擋循環", "passed": False},
+            {"label": "身分特徵連續無突變", "passed": True},
+            {"label": "遮擋區域層級關係正確", "passed": True},
+        ],
+    )
+    reasons = fusion.build_reasons(BASELINE_PASS, SYNTHETIC_LOW, PHOTO_PASS, occ_cycles_fail_only)
+    assert len(reasons) == 1
+    assert reasons[0] != fusion._FAILURE_REASONS["occlusion"]
+    assert "換臉" not in reasons[0]
+
+    occ_identity_fail = dict(
+        OCC_FAIL,
+        checks=[
+            {"label": "偵測到至少 2 次揮手遮擋循環", "passed": True},
+            {"label": "身分特徵連續無突變", "passed": False},
+            {"label": "遮擋區域層級關係正確", "passed": True},
+        ],
+    )
+    reasons = fusion.build_reasons(BASELINE_PASS, SYNTHETIC_LOW, PHOTO_PASS, occ_identity_fail)
+    assert reasons == [fusion._FAILURE_REASONS["occlusion"]]
+
+
+def test_build_reasons_baseline_wording_lists_failed_action_names():
+    baseline_wave_only = dict(
+        BASELINE_FAIL,
+        challenges=[
+            {"action": "wave_hand", "name": "臉前揮手", "durationSec": 7, "passed": False},
+            {"action": "turn_left", "name": "頭部向左轉", "durationSec": 5, "passed": True},
+            {"action": "turn_right", "name": "頭部向右轉", "durationSec": 5, "passed": True},
+            {"action": "blink", "name": "眨眼", "durationSec": 3, "passed": True},
+        ],
+    )
+    reasons = fusion.build_reasons(baseline_wave_only, SYNTHETIC_LOW, PHOTO_PASS, OCC_PASS)
+    assert reasons == ["以下動作挑戰未偵測到有效動作：臉前揮手"]
+
+
 # --------------------------------------------------------------------------
 # is_baseline_missed
 # --------------------------------------------------------------------------
