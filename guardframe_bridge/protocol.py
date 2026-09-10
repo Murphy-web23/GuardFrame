@@ -35,6 +35,7 @@ REQUIRED_CHANNELS = 3
 REQUIRED_ASSESS_COLOR_ORDER = "BGR"
 
 MOCK_SOURCE_MARKER = "MOCK_GUARDFRAME_RUNNER"
+REAL_SOURCE_MARKER = "REAL_GUARDFRAME_RUNNER"
 
 ReadExact = Callable[[int], bytes]
 
@@ -255,12 +256,12 @@ def build_health_request(request_id: str) -> dict:
     }
 
 
-def build_health_response(request_id: str) -> dict:
+def build_health_response(request_id: str, *, source: str = MOCK_SOURCE_MARKER) -> dict:
     return {
         "protocol_version": PROTOCOL_VERSION,
         "message_type": MessageType.HEALTH_RESPONSE.value,
         "request_id": request_id,
-        "source": MOCK_SOURCE_MARKER,
+        "source": source,
         "status": "ready",
     }
 
@@ -292,12 +293,31 @@ def build_mock_assess_response(request_id: str) -> dict:
     }
 
 
-def build_error_response(request_id: str, code: ProtocolErrorCode, message: str) -> dict:
+def build_assess_response(
+    request_id: str,
+    fake_probability: float,
+    top_signals: list,
+    *,
+    source: str,
+) -> dict:
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        "message_type": MessageType.ASSESS_RESPONSE.value,
+        "request_id": request_id,
+        "source": source,
+        "fakeProbability": fake_probability,
+        "topSignals": top_signals,
+    }
+
+
+def build_error_response(
+    request_id: str, code: ProtocolErrorCode, message: str, *, source: str = MOCK_SOURCE_MARKER
+) -> dict:
     return {
         "protocol_version": PROTOCOL_VERSION,
         "message_type": MessageType.ERROR.value,
         "request_id": request_id,
-        "source": MOCK_SOURCE_MARKER,
+        "source": source,
         "error_code": code.value,
         "error_message": message,
     }
