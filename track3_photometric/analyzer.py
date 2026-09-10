@@ -227,9 +227,14 @@ def analyze_photometric(frames: list, fps: float, light_log: dict, buffer_ms: fl
     # 三項判定
     # a. 相關係數要達標。
     correlation_ok = correlation >= config.PHOTO_CORRELATION_MIN
-    # b. 延遲要在合理範圍內。取絕對值——量測雜訊可能讓真正同步的訊號
-    #    測出微小負延遲，只看正值會誤殺。
-    latency_ok = abs(latency_ms) <= config.PHOTO_LATENCY_MAX_MS
+    # b. 延遲要在合理範圍內。反射不可能發生在光源變化「之前」（見
+    #    _cross_correlate() 的說明：正值代表反射晚於光源變化），改成
+    #    不對稱的範圍——只允許小幅度負延遲（量測雜訊可能讓真正同步的
+    #    訊號測出微小負延遲，只看正值會誤殺），大幅負延遲一律不合理。
+    #    2026-09-09：原本這裡直接取絕對值，等於完全放棄因果方向限制，
+    #    虛擬攝影機注入攻擊量到 -400.35ms 也被判定合理放行，見
+    #    config.py PHOTO_LATENCY_MIN_MS 的說明。
+    latency_ok = config.PHOTO_LATENCY_MIN_MS <= latency_ms <= config.PHOTO_LATENCY_MAX_MS
     # c. 立體幾何要合理，這項專門抓列印照片翻拍（相關係數可能不低，
     #    因為螢幕光真的照得到照片，但平面各區反應幅度一致）。
     geometry_ok = geometry_score >= config.PHOTO_GEOMETRY_MIN
@@ -247,9 +252,19 @@ def analyze_photometric(frames: list, fps: float, light_log: dict, buffer_ms: fl
             correlation, config.PHOTO_CORRELATION_MIN, config.PHOTO_CORRELATION_RISK_SCALE,
             higher_is_better=True,
         ),
-        threshold_risk(
-            abs(latency_ms), config.PHOTO_LATENCY_MAX_MS, config.PHOTO_LATENCY_RISK_SCALE,
-            higher_is_better=False,
+        # 延遲改成跟上面 latency_ok 一樣的不對稱範圍：正向超過上限、
+        # 負向超過下限，各自算風險再取最大值，跟身分穩定度那類
+        # 「兩個門檻都要顧」的組合方式一致（見 track4_occlusion/
+        # analyzer.py identity_risk 的同類寫法）。
+        combine_risks(
+            threshold_risk(
+                latency_ms, config.PHOTO_LATENCY_MAX_MS, config.PHOTO_LATENCY_RISK_SCALE,
+                higher_is_better=False,
+            ),
+            threshold_risk(
+                latency_ms, config.PHOTO_LATENCY_MIN_MS, config.PHOTO_LATENCY_RISK_SCALE,
+                higher_is_better=True,
+            ),
         ),
         threshold_risk(
             geometry_score, config.PHOTO_GEOMETRY_MIN, config.PHOTO_GEOMETRY_RISK_SCALE,
