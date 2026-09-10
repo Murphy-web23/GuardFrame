@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AIGuardian } from '../AIGuardian';
-import { DEMO_ADMIN_CREDENTIALS, setStoredAuth, setStoredAdminToken } from '../../data/mockAuth';
+import { setStoredAuth, setStoredAdminToken } from '../../data/mockAuth';
 import { adminLogin, ApiError } from '../../api/client';
 import { 
   Shield, 
@@ -13,8 +13,7 @@ import {
   Sparkles,
   Smartphone,
   Eye,
-  EyeOff,
-  Zap
+  EyeOff
 } from 'lucide-react';
 
 interface AdminLoginProps {
@@ -42,13 +41,6 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
     } else {
       window.location.hash = '#user';
     }
-  };
-
-  const handleFillDemoAdmin = () => {
-    setAccount(DEMO_ADMIN_CREDENTIALS.email);
-    setPassword(DEMO_ADMIN_CREDENTIALS.password);
-    setStatus('initial');
-    setErrorMessage('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -169,7 +161,7 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
                     setAccount(e.target.value);
                     if (status !== 'loading') setStatus('initial');
                   }}
-                  placeholder={DEMO_ADMIN_CREDENTIALS.email}
+                  placeholder="請輸入帳號"
                   disabled={status === 'loading'}
                   className="w-full text-xs pl-10 pr-3.5 py-3 rounded-xl border border-slate-200 bg-slate-50/70 focus:bg-white focus:border-sky-400 focus:outline-hidden focus:ring-2 focus:ring-sky-100 transition-all font-medium text-slate-800"
                 />
@@ -202,22 +194,6 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-            </div>
-
-            {/* Quick Demo Autofill Pill */}
-            <div className="flex items-center justify-between pt-1">
-              <button
-                type="button"
-                onClick={handleFillDemoAdmin}
-                className="text-[11px] font-semibold text-sky-600 hover:text-sky-800 hover:underline flex items-center gap-1 cursor-pointer"
-              >
-                <Zap className="h-3 w-3 text-amber-500 fill-amber-400" />
-                <span>⚡ 填入示範管理員帳密</span>
-              </button>
-
-              <span className="text-[10px] text-slate-400 font-mono">
-                {DEMO_ADMIN_CREDENTIALS.email}
-              </span>
             </div>
 
             {/* Submit Button */}

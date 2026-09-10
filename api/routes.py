@@ -820,11 +820,12 @@ def _run_verify_analysis(
                 "confidenceScore": baseline_result["confidenceScore"],
                 "note": f"未偵測到有效動作：{'、'.join(failed_challenge_names)}",
             }
-        if "synthetic" in failed:
-            layer_metrics["synthetic"] = {
-                "fakeProbability": synthetic_result["fakeProbability"],
-                "threshold": config.SYNTHETIC_THRESHOLD,
-            }
+        # 2026-09-10：Track1 目前仍是固定回傳 0.5 的佔位版本（見
+        # track1_synthetic/detector.py），不是真的在判斷——不管真人還是
+        # 假影片都會被列進 failed（0.5 卡在門檻上，見 common/fusion.py
+        # _layer_passed() 的嚴格小於比較）。這一層現在對複核人員來說是
+        # 雜訊而非訊號，先不交給 VLM 講，等 A 交付真模型後這段限制才會
+        # 消失，屆時把這裡加回來即可。
         if "photometric" in failed:
             layer_metrics["photometric"] = {
                 "correlation": photometric_result["correlation"],
