@@ -32,6 +32,7 @@ from api.models import AdminCredential, Applicant, VerificationRecordRow
 from baseline_challenge.analyzer import analyze_baseline
 from common.face_utils import extract_frames
 from common.fusion import failed_layers, fuse_decision
+from guardframe_bridge.client import GuardFrameBridgeClient
 from notifications import send_review_action_email, send_verdict_email, send_wave_retry_email
 from common.schemas import (
     AccountSetupRequest,
@@ -63,6 +64,19 @@ from track4_occlusion.analyzer import analyze_occlusion
 from vlm_summary.summarizer import summarize_verification
 
 router = APIRouter(prefix="/api")
+
+# R5-R5：Track 1 真實模型走 guardframe_bridge 連到 WSL 端的
+# RealGuardFrameRunner，見下面 _run_verify_analysis() 呼叫
+# _guardframe_bridge_client.assess() 的地方。GuardFrameBridgeClient 本身
+# 只是設定持有者（host/port/timeout），每次呼叫各自開關短命 TCP 連線
+# （見 guardframe_bridge/client.py 開頭說明），這裡模組層級建立一次就好，
+# 不需要在每次業務邏輯呼叫時各自組態、也不需要 FastAPI startup/shutdown
+# hook 管理生命週期（沒有常駐連線可管）。
+_guardframe_bridge_client = GuardFrameBridgeClient(
+    host=config.GUARDFRAME_BRIDGE_HOST,
+    port=config.GUARDFRAME_BRIDGE_PORT,
+    timeout_seconds=config.GUARDFRAME_BRIDGE_TIMEOUT_SECONDS,
+)
 
 _ACCOUNT_RESULT_BY_VERDICT = {
     "pass": "pending_setup",
@@ -375,6 +389,20 @@ def _sample_for_synthetic(frames, count):
         return []
     indices = np.linspace(0, len(frames) - 1, count).astype(int).tolist()
     return [cv2.resize(frames[i], (config.FACE_SIZE, config.FACE_SIZE)) for i in indices]
+
+
+def _sample_fullres_rgb_for_bridge(frames, count):
+    """均勻抽樣，供真正的 Track 1（guardframe_bridge）使用。
+
+    跟上面 _sample_for_synthetic() 用同一套抽樣公式（索引完全相同），
+    差別只在於**不縮放、不改色**——GuardFrameBridgeClient.assess() 要的
+    是全解析度 RGB 影格，RGB→BGR 的轉換是 guardframe_bridge/client.py
+    唯一負責的地方（見該檔案開頭說明），這裡不能重複做。
+    """
+    if not frames:
+        return []
+    indices = np.linspace(0, len(frames) - 1, count).astype(int).tolist()
+    return [frames[i] for i in indices]
 
 
 def _collect_review_frames(failed, *, frames, fps, phases, occlusion_result):
@@ -742,7 +770,8 @@ def _run_verify_analysis(
 
     baseline_result = analyze_baseline(action_frames, fps, challenge_dicts)
 
-    synthetic_raw = detect_synthetic(_sample_for_synthetic(frames, config.FRAME_COUNT))
+    sampled_fullres_rgb = _sample_fullres_rgb_for_bridge(frames, config.FRAME_COUNT)
+    synthetic_raw = _guardframe_bridge_client.assess(sampled_fullres_rgb)
     fake_probability = synthetic_raw["fakeProbability"]
     synthetic_result = {
         "fakeProbability": fake_probability,
