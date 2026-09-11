@@ -451,3 +451,59 @@ def test_analyze_photometric_rejects_unrelated_reflection(monkeypatch):
     assert result["checks"][0]["passed"] is False
     assert result["detected"] is False
     assert result["confidenceScore"] > 0.5, "相關係數沒過，信心分數該偏高風險"
+
+
+def test_analyze_photometric_rejects_large_negative_latency(monkeypatch):
+    """2026-09-09：真人測試（applicant 1770，虛擬攝影機注入攻擊）量到
+    -400.35ms 卻被舊版 abs() 判定合理放行——反射「領先」光源變化一大截
+    在物理上不合理（見 _cross_correlate() 的說明：正值代表反射晚於
+    光源變化）。這裡合成一個反射訊號提前 300ms 就對到未來的光值（等於
+    「預知」光還沒發生的變化），相關係數本身很高（曲線形狀吻合），
+    但延遲判定該擋下來。"""
+    fps = 30.0
+    light_log = seq.generate_light_log(seed=9)
+    n_frames = int(seq.sequence_duration_ms(light_log) / 1000.0 * fps)
+
+    landmarks = _make_region_landmarks(REGION_RECTS)
+    monkeypatch.setattr(
+        an, "extract_landmarks", lambda frames, fps: [landmarks] * len(frames)
+    )
+
+    amplitudes = {"forehead": 40, "nose_bridge": 5, "left_cheek": 25, "right_cheek": 2}
+    lead_ms = 300.0
+    frames = []
+    for i in range(n_frames):
+        light_val = seq.light_intensity_at(light_log, i / fps * 1000.0 + lead_ms)
+        values = {name: 120 + amplitudes[name] * light_val for name in REGION_RECTS}
+        frames.append(_make_region_frame(100, REGION_RECTS, values))
+
+    result = an.analyze_photometric(frames, fps, light_log)
+
+    assert result["correlation"] > config.PHOTO_CORRELATION_MIN, "曲線形狀吻合，相關係數本身該是高的"
+    assert result["checks"][1]["passed"] is False, "延遲判定該擋下大幅負延遲"
+    assert result["detected"] is False
+
+
+def test_analyze_photometric_tolerates_small_negative_latency(monkeypatch):
+    """小幅負延遲（量測雜訊範圍內，PHOTO_LATENCY_MIN_MS 以內）不該被誤殺，
+    維持修法前 abs() 設計原本要保護的情境。"""
+    fps = 30.0
+    light_log = seq.generate_light_log(seed=10)
+    n_frames = int(seq.sequence_duration_ms(light_log) / 1000.0 * fps)
+
+    landmarks = _make_region_landmarks(REGION_RECTS)
+    monkeypatch.setattr(
+        an, "extract_landmarks", lambda frames, fps: [landmarks] * len(frames)
+    )
+
+    amplitudes = {"forehead": 40, "nose_bridge": 5, "left_cheek": 25, "right_cheek": 2}
+    lead_ms = abs(config.PHOTO_LATENCY_MIN_MS) / 2  # 明顯小於容忍上限
+    frames = []
+    for i in range(n_frames):
+        light_val = seq.light_intensity_at(light_log, i / fps * 1000.0 + lead_ms)
+        values = {name: 120 + amplitudes[name] * light_val for name in REGION_RECTS}
+        frames.append(_make_region_frame(100, REGION_RECTS, values))
+
+    result = an.analyze_photometric(frames, fps, light_log)
+
+    assert result["checks"][1]["passed"] is True, "小幅負延遲不該被誤殺"

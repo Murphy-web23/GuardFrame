@@ -9,6 +9,11 @@ interface DemoUserPickerProps {
   className?: string;
 }
 
+// 正式展示（例如專題發表）時關掉這顆按鈕，避免介面上出現「一鍵填入示範
+// 資料」這種看起來像測試用途的設計；開發/自己測試時改回 true 即可，不用
+// 動到四個呼叫端（BasicInfoScreen/SmsVerifyScreen 的手機版和桌面版）。
+const SHOW_DEMO_PICKER = false;
+
 export const DemoUserPicker: React.FC<DemoUserPickerProps> = ({
   onSelectUser,
   className = '',
@@ -84,6 +89,8 @@ export const DemoUserPicker: React.FC<DemoUserPickerProps> = ({
     onSelectUser(user);
     setIsOpen(false);
   };
+
+  if (!SHOW_DEMO_PICKER) return null;
 
   return (
     <div ref={containerRef} className={`relative w-full ${className}`}>

@@ -18,6 +18,7 @@ CVPR 2024 Workshop）。VLM 真正擅長的是「把已經算出來的證據轉�
 """
 
 import base64
+import re
 import time
 
 import cv2
@@ -107,8 +108,9 @@ def _format_layer_metrics(layer_metrics: dict) -> str:
     """把 api/routes.py 傳來的 layerMetrics 轉成一段給 LLM 讀的中文描述。
 
     只包含沒通過的層（呼叫端已經先篩過），每層列出實際量到的數值跟
-    對應門檻，讓 LLM 有具體數字可以引用，而不是只能講「這層沒過」這種
-    空話。
+    對應門檻。這些數字是給 LLM 判斷「哪裡最可疑」用的素材，不是要它
+    直接抄進回答——2026-09-10 改成要求 LLM 輸出白話描述而非分數本身，
+    見 _CASE_SUMMARY_PROMPT_TEMPLATE。
     """
     lines = []
     for key, metrics in layer_metrics.items():
@@ -159,12 +161,55 @@ def _format_layer_metrics(layer_metrics: dict) -> str:
 
 _CASE_SUMMARY_PROMPT_TEMPLATE = (
     "你是身分驗證系統的複核助手。以下是這筆案件沒有通過的檢查層，"
-    "附上各層實際量到的數值跟門檻：\n\n{metrics}\n\n"
-    "請用不超過 80 個字的白話文，跟銀行風控人員解釋這筆案件為什麼需要"
-    "人工複核、具體是哪裡看起來可疑（引用上面的數字），不要逐條複誦，"
-    "整合成一段連貫的說明。不要做出通過或拒絕的建議，你只負責解釋現有"
-    "證據，最終判定由人員決定。"
+    "附上各層實際量到的數值跟門檻（這些數字給你自己判斷用，不要抄進"
+    "回答裡）：\n\n{metrics}\n\n"
+    "上面列出的每一層都要講到，不能只挑其中一兩個、也不能漏講其他層，"
+    "用白話跟銀行風控人員解釋『系統在每一層各自觀察到什麼』，例如："
+    "揮手次數不夠、遮擋前後臉部特徵變化很大像換了一張臉、反光跟畫面"
+    "明暗對不太上。不要寫出分數或門檻數字，直接講發生了什麼事，整合"
+    "成一段連貫的話，不超過 100 個字。不要用「1.」「2.」這種編號、"
+    "不要用 markdown 的星號或項目符號，就是一般人平常講話的樣子。"
+    "不要做出通過或拒絕的建議，你只負責解釋現有證據，最終判定由人員"
+    "決定。"
 )
+
+# 2026-09-10：qwen2.5vl:3b 這種小模型對「不超過 N 字」這類長度指令的
+# 遵循度不穩定，實測即使 prompt 已經要求 80 字，還是會把每一層沒過的
+# 檢查都逐條列出來（連分數、門檻都照抄），寫出兩三百字的摘要，複核
+# 人員看了反而抓不到重點。改成白話描述「系統觀察到什麼」（見上面
+# prompt）後長度自然短了很多，但反而出現另一個問題：要求「只挑1-2個
+# 疑點」時，小模型會挑到最好講、卻不是最關鍵的那項（真人測試撞到過：
+# 一筆虛擬攝影機注入攻擊，Track1／Track3 都正確標記為可疑，摘要卻只
+# 提了對照組動作沒做對，把真正的攻擊訊號漏講了）。改成要求「每一層
+# 都要講到」解決漏講問題，但這樣總長度會隨沒過的層數變多，上限跟著
+# 放寬——長度指令對小模型一樣不可盡信，只調 prompt 不夠保險，加一道
+# 程式碼層的安全網：超過這個長度就在最後一個句讀處截斷，寧可資訊少
+# 一點也要保證不會失控地長。
+_SUMMARY_HARD_LIMIT = 120
+
+
+def _truncate_summary(text: str, limit: int = _SUMMARY_HARD_LIMIT) -> str:
+    """超過長度上限時，在最後一個句讀符號處截斷，避免斷在句子中間。"""
+    if len(text) <= limit:
+        return text
+    truncated = text[:limit]
+    cut = max(truncated.rfind(c) for c in "。！？；")
+    if cut > 0:
+        return truncated[: cut + 1]
+    return truncated.rstrip("，、") + "…"
+
+
+# 2026-09-10：prompt 已經要求不要編號、不要 markdown，但小模型還是常常
+# 加「1. 」這種條列開頭，甚至夾雜 **粗體** 星號——這些符號直接顯示在
+# 複核介面上會很突兀（星號沒被 markdown 渲染的話就是原始字元）。跟長度
+# 限制一樣不能只靠 prompt，這裡在程式碼層再清一次。
+_LEADING_NUMBERING_RE = re.compile(r"^\s*(?:[0-9]+[.、)]|[-*•])\s*")
+
+
+def _strip_formatting(text: str) -> str:
+    """去掉開頭的編號/項目符號跟 markdown 粗體星號。"""
+    text = _LEADING_NUMBERING_RE.sub("", text)
+    return text.replace("**", "")
 
 
 def _ask_vlm_text(prompt: str) -> str:
@@ -199,7 +244,7 @@ def synthesize_case_summary(layer_metrics: dict) -> str | None:
         return None
     try:
         prompt = _CASE_SUMMARY_PROMPT_TEMPLATE.format(metrics=_format_layer_metrics(layer_metrics))
-        return _ask_vlm_text(prompt)
+        return _truncate_summary(_strip_formatting(_ask_vlm_text(prompt)))
     except Exception:
         return None
 

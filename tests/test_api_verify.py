@@ -377,7 +377,7 @@ def test_verify_full_pipeline_writes_record_when_quality_passes(
     assert "riskScore" in body["decision"]
     assert body["decision"]["verdict"] in ("pass", "review", "reject")
     assert "fakeProbability" in body["synthetic"]
-    assert body["synthetic"]["fakeProbability"] == pytest.approx(0.05)  # B 的佔位版本固定值（2026-08-21 暫改，見 track1_synthetic/detector.py）
+    assert body["synthetic"]["fakeProbability"] == pytest.approx(0.5)  # B 的佔位版本固定值（2026-08-21 暫改，見 track1_synthetic/detector.py）
     assert "heartRate" in body["rppg"]
     assert "geometryScore" in body["photometric"]
     assert "layerScore" in body["occlusion"]
@@ -392,7 +392,7 @@ def test_verify_full_pipeline_writes_record_when_quality_passes(
         )
         assert len(rows) == 1
         # DB 讀回來是 Decimal（Numeric 欄位），跟 float 比較前要先轉型
-        assert float(rows[0].synthetic_fake_probability) == pytest.approx(0.05)
+        assert float(rows[0].synthetic_fake_probability) == pytest.approx(0.5)
         assert rows[0].verdict == body["decision"]["verdict"]
 
         # 象徵性影片保存（PHASE1_NOTES §八）：走完整條管線的紀錄要真的

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { FormData } from '../../../types';
-import { ArrowRight, Phone, Sparkles } from 'lucide-react';
+import { ArrowRight, Phone } from 'lucide-react';
 import { SessionCountdownBadge } from '../../common/SessionCountdownBadge';
 import { DemoUserPicker } from '../../common/DemoUserPicker';
 import { DemoUser } from '../../../data/demoUsers';
@@ -94,13 +94,6 @@ export const DesktopSmsVerify: React.FC<DesktopSmsVerifyProps> = ({
       });
       onNext();
     }, 600);
-  };
-
-  const handleFillDemoCode = () => {
-    const demo = ['1', '2', '3', '4', '5', '6'];
-    setCodeDigits(demo);
-    setCodeError('');
-    handleVerifyCode('123456');
   };
 
   const maskedPhone = formData.phone
@@ -216,18 +209,6 @@ export const DesktopSmsVerify: React.FC<DesktopSmsVerifyProps> = ({
                 className="text-sky-600 hover:text-sky-700 font-bold cursor-pointer"
               >
                 重新發送驗證碼
-              </button>
-            </div>
-
-            <div className="pt-2 border-t border-slate-100 flex justify-center">
-              <button
-                id="desktop-demo-fill-sms-btn"
-                type="button"
-                onClick={handleFillDemoCode}
-                className="px-4 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold flex items-center gap-2 cursor-pointer transition-all border border-slate-200/80"
-              >
-                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                <span>填入示範驗證碼 (123456)</span>
               </button>
             </div>
 
