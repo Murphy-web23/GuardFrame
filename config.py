@@ -488,3 +488,12 @@ RESEND_FROM_NAME = "GuardFrame 開戶驗證"
 # demo 用手機掃 QR code 連線時（見開發伺服器改監聽區網那次修改），
 # 記得把這個改成當下那台電腦的區網 IP，不要用 localhost。
 FRONTEND_BASE_URL = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+
+# GuardFrame TCP bridge（guardframe_bridge/），R5-R5：/verify 呼叫真正的
+# Track 1 模型走這個 client 連到 WSL 端的 RealGuardFrameRunner，見
+# api/routes.py 的 _guardframe_bridge_client。第一版預設 300 秒：
+# R5-R4 首次真實 development assess 使用 300 秒 timeout 成功，
+# 且模型會在 assess 階段 lazy load；本批次先固定此值，不做 timeout 調校。
+GUARDFRAME_BRIDGE_HOST = os.getenv("GUARDFRAME_BRIDGE_HOST", "127.0.0.1")
+GUARDFRAME_BRIDGE_PORT = int(os.getenv("GUARDFRAME_BRIDGE_PORT", "48173"))
+GUARDFRAME_BRIDGE_TIMEOUT_SECONDS = float(os.getenv("GUARDFRAME_BRIDGE_TIMEOUT_SECONDS", "300.0"))
