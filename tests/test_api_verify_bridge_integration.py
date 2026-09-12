@@ -280,7 +280,10 @@ def test_legacy_placeholder_symbols_remain_present_and_functional():
     assert all(frame.shape == (config.FACE_SIZE, config.FACE_SIZE, 3) for frame in sampled)
 
     result = legacy_detect_synthetic(sampled)
-    assert result["fakeProbability"] == pytest.approx(0.05)
+    # 2026-09-13：佔位版本已於 track1_synthetic/detector.py 改成固定回傳
+    # 0.5（真人測試期間排除雜訊用，見該檔案內註解），這裡的期望值跟著
+    # 更新，不是這個 legacy 呼叫鏈本身的行為驗證邏輯改變。
+    assert result["fakeProbability"] == pytest.approx(0.5)
     assert len(result["topSignals"]) == 3
 
 
@@ -324,7 +327,9 @@ def test_real_track1_path_calls_bridge_not_legacy_placeholder(
 
 # ---------------------------------------------------------------------------
 # 8/9：bridge fakeProbability 0.2/0.5/0.8 傳遞到既有融合邏輯的行為不變，
-# 且 Track1 加權風險貢獻精確等於 4.0/10.0/16.0（其餘各層固定為零風險）。
+# 且 Track1 加權風險貢獻精確等於 1.0/2.5/4.0（其餘各層固定為零風險）。
+# 2026-09-13：WEIGHT_SYNTHETIC 從 0.20 降到 0.05（見 config.py 同日
+# 註解），這裡的期望值跟著更新，不是測試邏輯本身改變。
 # ---------------------------------------------------------------------------
 
 
@@ -333,7 +338,7 @@ def test_real_track1_path_calls_bridge_not_legacy_placeholder(
 def test_bridge_fake_probability_passthrough_and_fusion_contribution(
     monkeypatch, applicant_id, tmp_path, fake_probability, hermetic_layers
 ):
-    assert config.WEIGHT_SYNTHETIC == pytest.approx(0.20)
+    assert config.WEIGHT_SYNTHETIC == pytest.approx(0.05)
 
     top_signals = _fixed_top_signals()
     stub = _StubBridgeClient(result={"fakeProbability": fake_probability, "topSignals": top_signals})
@@ -360,7 +365,7 @@ def test_bridge_fake_probability_passthrough_and_fusion_contribution(
     )
     expected_track1_contribution = fake_probability * 100 * config.WEIGHT_SYNTHETIC
     assert expected_track1_contribution == pytest.approx(
-        {0.2: 4.0, 0.5: 10.0, 0.8: 16.0}[fake_probability]
+        {0.2: 1.0, 0.5: 2.5, 0.8: 4.0}[fake_probability]
     )
 
     session = SessionLocal()

@@ -143,10 +143,24 @@ OCC_LAYER_SCORE_MIN = 0.50
 # 是因為 Track1 模型還沒訓練完成、Track3 穩定度也還在處理中，兩者都
 # 還沒有足夠證據支持該拿更高權重。
 # Track 4 為核心防禦層，權重最高；實測後於階段4依 ROC 校準微調
-WEIGHT_BASELINE = 0.10
-WEIGHT_SYNTHETIC = 0.20
-WEIGHT_PHOTOMETRIC = 0.20
-WEIGHT_OCCLUSION = 0.50
+# 2026-09-13：A 交付真的 Track1 模型後，真人 webcam 測試（applicant
+# 1798/1799，baseline/photo/occ 三層全乾淨通過）連續 3 次都拿到固定
+# 0.8（GuardFrame 目前對外只回傳 0.2/0.5/0.8 三檔，見交付文件），把
+# 這兩筆真人樣本從 review 推到接近 reject。回算證實：原本 0.20 的
+# 權重下，Track1 單獨貢獻 16 分，是這兩筆被推去人工複核的唯一原因
+# （其餘三層都通過）。先降低 Track1 權重、把讓出來的份量分給其他
+# 三層——但第一版（0.15/0.05/0.25/0.55）會讓
+# test_fuse_decision_realtime_faceswap_scenario_is_rejected 這個核心
+# 資安測試從 reject 退步成 review（0.05×94+0.55×100=60.7，剛好卡在
+# review），不能接受。這版把 occlusion 拉高到 0.60（維持攻擊情境有
+# 安全邊際地判 reject）、baseline 拉高到 0.20（原本偏低），
+# photometric 降到 0.15。這是展示前的暫時措施，不是正式校準結果——
+# 真的要解決，仍要回頭補真人 webcam 條件的訓練資料，見 A 那邊
+# id01/id02 real webcam 泛化不良的診斷。
+WEIGHT_BASELINE = 0.20
+WEIGHT_SYNTHETIC = 0.05
+WEIGHT_PHOTOMETRIC = 0.15
+WEIGHT_OCCLUSION = 0.60
 
 # 決策區間
 # 2026-08-21：原本 PASS_MAX=30、REVIEW_MAX=60，是 CONVENTIONS.md §8
