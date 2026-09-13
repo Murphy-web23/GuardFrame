@@ -849,12 +849,16 @@ def _run_verify_analysis(
                 "confidenceScore": baseline_result["confidenceScore"],
                 "note": f"未偵測到有效動作：{'、'.join(failed_challenge_names)}",
             }
-        # 2026-09-10：Track1 目前仍是固定回傳 0.5 的佔位版本（見
-        # track1_synthetic/detector.py），不是真的在判斷——不管真人還是
-        # 假影片都會被列進 failed（0.5 卡在門檻上，見 common/fusion.py
-        # _layer_passed() 的嚴格小於比較）。這一層現在對複核人員來說是
-        # 雜訊而非訊號，先不交給 VLM 講，等 A 交付真模型後這段限制才會
-        # 消失，屆時把這裡加回來即可。
+        # 2026-09-13：正式路徑已透過 GuardFrameBridgeClient（見
+        # _guardframe_bridge_client.assess()）取得 Track1 的真實推論結果，
+        # 不再是佔位版本。Track1 屬於 failed layer 時，把已經算出來的
+        # fakeProbability／threshold 交給 VLM 做證據說明，沿用上面各層
+        # 同一套「只給沒過的層」原則，不重跑 Track1、不重算數值。
+        if "synthetic" in failed:
+            layer_metrics["synthetic"] = {
+                "fakeProbability": synthetic_result["fakeProbability"],
+                "threshold": synthetic_result["threshold"],
+            }
         if "photometric" in failed:
             layer_metrics["photometric"] = {
                 "correlation": photometric_result["correlation"],

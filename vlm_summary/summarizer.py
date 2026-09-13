@@ -1,9 +1,11 @@
 """VLM 摘要模組（CONVENTIONS §4.10）。
 
-只在人工複核（verdict=review）時被呼叫，見 api/routes.py。決策本身在這
-之前就已經由五層防禦融合算完——VLM 不參與 pass/reject 判定，唯一的工作
-是把 Track4 標記出來的異常影格轉成複核人員看得懂的文字說明，指出「該去
-影片哪一秒看」而不是內部的影格編號。
+在人工複核（verdict=review）跟系統自動拒絕（verdict=reject）時都會被
+呼叫，見 api/routes.py。決策本身在這之前就已經由五層防禦融合算完——VLM
+不參與 pass/review/reject 判定，唯一的工作是把沒過的層（baseline／
+synthetic／photometric／occlusion 都可能是證據來源，不限 Track4）轉成
+複核人員看得懂的文字說明，指出「該去影片哪一秒看」而不是內部的影格編號、
+以及「系統當初為什麼覺得可疑」。
 
 之所以不讓 VLM 直接做判定：深偽/活體攻擊的訊號（rPPG 心跳、GAN 生成瑕疵
 等）多半是肉眼看不出來的統計/物理特徵，文獻上通用 VLM 對這類任務的準確

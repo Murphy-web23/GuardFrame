@@ -433,3 +433,72 @@ def test_bridge_infrastructure_failure_is_not_converted_to_model_uncertainty(
     # 例外發生在 shutil.move(tmp_path, ...) 之前，暫存影片檔案應該原封
     # 不動——連帶佐證失敗真的發生在寫 DB／搬檔案之前，不是搬完才報錯。
     assert video_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# 12：Track1 是 failed layer 時，api/routes.py 建 layer_metrics 必須把
+# _guardframe_bridge_client.assess() 已經算出來的 synthetic_result 原封
+# 不動放進 layerMetrics["synthetic"] 交給 VLM 做證據說明——不能重新呼叫
+# bridge、不能自己另外定義 threshold。用 occlusion 沒過把 verdict 逼進
+# review/reject（Track1 權重只有 0.05，光靠它自己不足以跨過 review 門檻），
+# 這樣才能在「Track1 過／沒過」兩種情況下都觸發 summarize_verification()
+# 分別驗證 layerMetrics 內容。
+# ---------------------------------------------------------------------------
+
+
+@requires_db
+@pytest.mark.parametrize(
+    "fake_probability,expect_synthetic_in_metrics",
+    [(0.9, True), (0.1, False)],
+)
+def test_synthetic_layer_metrics_reuses_existing_bridge_result_when_failed(
+    monkeypatch, applicant_id, tmp_path, hermetic_layers, fake_probability, expect_synthetic_in_metrics
+):
+    failing_occlusion = dict(hermetic_layers.occlusion)
+    failing_occlusion["detected"] = False
+    failing_occlusion["confidenceScore"] = 1.0
+    failing_occlusion["checks"] = [
+        {"label": "waveCycles", "passed": False},
+        {"label": "identity", "passed": True},
+        {"label": "layerColor", "passed": True},
+    ]
+    monkeypatch.setattr(routes, "analyze_occlusion", lambda *a, **kw: failing_occlusion)
+
+    captured_records = []
+
+    def _capture_and_stub_vlm(record, anomaly_frames):
+        captured_records.append(record)
+        return {"available": False, "frameObservations": [], "summary": "", "model": "", "latencyMs": 0.0}
+
+    monkeypatch.setattr(routes, "summarize_verification", _capture_and_stub_vlm)
+
+    top_signals = _fixed_top_signals()
+    stub = _StubBridgeClient(result={"fakeProbability": fake_probability, "topSignals": top_signals})
+    monkeypatch.setattr(routes, "_guardframe_bridge_client", stub)
+
+    frames = _build_frames()
+    phases = _build_phases()
+    video_path = tmp_path / "video.mp4"
+    video_path.write_bytes(b"stub-video-bytes")
+
+    routes._run_verify_analysis(
+        applicant_id, str(video_path), ".mp4", "測試", frames, 5.0, phases, [], {}, _fixed_quality(),
+    )
+
+    # CASE 3：bridge 在整段 _run_verify_analysis() 只被呼叫一次（真正的
+    # Track1 推論那一次）——建 layerMetrics 沒有另外再呼叫一次 assess()
+    # 重算，用的是同一個 synthetic_result。
+    assert len(stub.calls) == 1
+
+    assert len(captured_records) == 1
+    layer_metrics = captured_records[0]["layerMetrics"]
+
+    if expect_synthetic_in_metrics:
+        # CASE 1：synthetic 是 failed layer，fakeProbability/threshold
+        # 必須等於 _guardframe_bridge_client.assess() 的真實回傳值，
+        # 不是重算或另外定義的數字。
+        assert layer_metrics["synthetic"]["fakeProbability"] == pytest.approx(fake_probability)
+        assert layer_metrics["synthetic"]["threshold"] == pytest.approx(config.SYNTHETIC_THRESHOLD)
+    else:
+        # CASE 2：synthetic 沒有沒過，layerMetrics 不該包含這個 key。
+        assert "synthetic" not in layer_metrics
